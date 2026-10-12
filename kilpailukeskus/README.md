@@ -1,4 +1,4 @@
-# Oak Hill Event Park (OAKH4632) — Virtuaalinen Kilpailukeskus
+# Virtuaalinen Kilpailukeskus
 
 Cloudflare Pages -sovellus, joka rakentuu `../lib/*.js`:n VRL-automaation päälle:
 
@@ -11,12 +11,21 @@ Cloudflare Pages -sovellus, joka rakentuu `../lib/*.js`:n VRL-automaation pääl
 - Kun VIP-päivä on kokonaan ohi (arvonta VIP+1 vrk) **tai** kaikki luokat (joilla on yläraja) ovat täynnä, erillinen
   ajastettu Worker (`cron/`) arpoo jokaisen luokan sijoitukset ja lähettää tulokset
   automaattisesti VRL:ään (`../laheta_tulokset.js`:n logiikalla).
+- Järjestäjä voi luoda myös omia "villejä" lajeja, joiden kilpailuja ei lähetetä VRL:ään
+  (ks. [Omat lajit](#omat-villit-lajit)).
+
+Hallintasivut (`/kilpailut/*`, `/lajit/*`) on suojattu yhdellä jaetulla admin-tunnuksella
+(`ADMIN_USER` / `ADMIN_PASSWORD`, kirjautuminen `/kirjaudu`, ks. `functions/_middleware.js`).
+Julkisia ovat etusivu `/`, kilpailukutsut `/<jaos>/<vuosi>/<kuukausi>/<numero>`,
+ilmoittautuminen `/kilpailut/<id>/ilmoittaudu` ja `/rmp`.
 
 ## Arkkitehtuuri
 
-- **Pages-projekti** (`oakh4632`, tämä hakemisto) — käyttöliittymä + API `functions/`-kansiossa.
-- **D1-tietokanta** (`oakh4632-db`) — `migrations/0001_init.sql`. Sama kanta on sidottu
-  sekä Pages-projektiin että cron-workeriin.
+- **Pages-projekti** (tämä hakemisto, nimi `wrangler.toml`:ssa) — käyttöliittymä + API
+  `functions/`-kansiossa.
+- **D1-tietokanta** (nimi ja id `wrangler.toml`:ssa) — skeema `migrations/`-kansion
+  tiedostoista järjestyksessä (`0001_init.sql` → uusin). Sama kanta on sidottu sekä
+  Pages-projektiin että cron-workeriin.
 - **`cron/`** — erillinen Worker ajastimella (`*/15 * * * *`), koska Cloudflare Pages ei tue
   cron-triggereitä. Jaettu D1, oma `wrangler.toml`, oma deploy.
 - **`lib/`** — jaettu sovelluslogiikka (kopio + fetch-portti `../lib/*.js`:stä, ks. alla).
@@ -71,8 +80,9 @@ jättää sen odottamaan.
 
 Kun kilpailulle löytyy `vrl_kisa_id` (ks. edellinen kohta), Kilpailukeskus hakee kertaalleen
 järjestäjän omat hevoset ulkoisesta rajapinnasta
-(`https://sg-visu.vercel.app/api/horses/by-owner-discipline?owner=Tilli&discipline=...`,
-ks. `lib/omat_hevoset.js`) kilpailun jaosta vastaavalla lajilla, ja lisää jokaisen
+(oletuksena `https://sg-visu.vercel.app/api/horses/by-owner-discipline?owner=<talli>&discipline=...`,
+osoitteen voi vaihtaa `OMAT_HEVOSET_API_URL`-muuttujalla; tallin nimi on `OMA_TALLI`-vakiona
+tiedostossa `lib/omat_hevoset.js`) kilpailun jaosta vastaavalla lajilla, ja lisää jokaisen
 palautetun hevosen sen `discipline_level`-kentän (esim. `"120cm"`, `"Helppo A"`) nimeltään
 täsmäävään luokkaan - ilman että järjestäjän tarvitsee ilmoittaa niitä käsin
 ilmoittautumislomakkeella. Haku ei toistu itsestään joka sivulatauksella
@@ -90,6 +100,28 @@ sivulla - ei koskaan julkisella kutsusivulla.
 Vaatii kaksi lisäsalaisuutta (Pages-projektissa, ei cron-workerissa - tämä ei koske
 tulosten lähetystä): `OMA_RATSASTAJA_NIMI` ja `OMA_RATSASTAJA_VRL_TUNNUS`, ks.
 `.dev.vars.example`. Ilman niitä toiminto ohitetaan ja virhe näkyy samassa listassa.
+
+## Kilpailupaikat
+
+`/kilpailut/kilpailupaikat` tallentaa järjestävän tallin / kilpailupaikan tiedot (tunnus,
+nimi, URL, vastuuhenkilö) valmiiksi, jolloin ne valitaan uuden kilpailun lomakkeella
+pudotusvalikosta. Yksi paikoista voidaan merkitä oletukseksi. Tiedot kopioidaan kilpailulle
+sitä luotaessa, joten paikan myöhempi muokkaus tai poisto ei muuta jo luotuja kilpailuja
+(ks. `migrations/0010_kilpailupaikat.sql`).
+
+## Omat ("villit") lajit
+
+`/lajit` hallinnoi järjestäjän itse luomia lajeja, jotka eivät ole VRL:n virallisia jaoksia
+(id:t alkaen 9900, ks. `migrations/0013_lajit.sql`). Niiden kilpailuja ei koskaan lähetetä
+VRL:n kisakalenteriin, vaan ilmoittautuminen avataan suoraan. Lajikohtaisesti asetetaan:
+
+- luokkavaihtoehdot uuden kilpailun lomakkeelle,
+- säännöt (max osallistujia/luokka, max lähtöjä/hevonen jne., `0014_laji_saannot.sql`),
+- lajin nimi omien hevosten rajapinnassa (`0017_laji_omat_hevoset.sql`),
+- osallistujat ilman VRL-/VH-tunnuksia (`0018_laji_ilman_tunnuksia.sql`).
+
+Koska villiä kilpailua ei lähetetä VRL:ään, järjestäjä asettaa sen näytettävän tilan
+(odottaa / hyväksytty / tulokset lähetetty) käsin kilpailun sivulta (`0016_villi_tila.sql`).
 
 ## RMP-taitopisteiden haku
 
@@ -137,13 +169,12 @@ Paino lasketaan näin (ks. `lib/rmp_arvonta.js`):
 
 ## Deploy
 
-Ensimmäinen julkaisu on jo tehty:
-- Pages: **https://oakh4632.pages.dev**
-- Cron worker: **https://oakh4632-cron.workers.dev** (ajastettu, ei tarkoitettu julkiseksi
-  käyttöliittymäksi — `POST /aja` laukaisee käsittelyn käsin testausta varten)
-- D1: `oakh4632-db` (id `450154a3-e94c-4db0-9402-1b5a36562560`)
+Projektien ja tietokannan nimet sekä D1-id määritellään `wrangler.toml`- ja
+`cron/wrangler.toml`-tiedostoissa. Alla `<projekti>` = Pages-projektin nimi ja
+`<tietokanta>` = D1-kannan nimi. Cron-workerin `POST /aja` laukaisee käsittelyn käsin
+testausta varten (ei tarkoitettu julkiseksi käyttöliittymäksi).
 
-Uudelleenjulkaisu:
+Julkaisu:
 
 ```bash
 cd kilpailukeskus
@@ -154,32 +185,36 @@ cd cron && npx wrangler deploy  # cron-worker
 Skeeman muutokset:
 
 ```bash
-npx wrangler d1 execute oakh4632-db --local  --file=migrations/000X_xxx.sql
-npx wrangler d1 execute oakh4632-db --remote --file=migrations/000X_xxx.sql
+npx wrangler d1 execute <tietokanta> --local  --file=migrations/000X_xxx.sql
+npx wrangler d1 execute <tietokanta> --remote --file=migrations/000X_xxx.sql
 ```
 
-### Salaisuudet (VRL-tunnukset)
+### Salaisuudet
 
-Molemmat deployt (Pages + cron-worker) tarvitsevat samat kolme salaisuutta erikseen —
+Molemmat deployt (Pages + cron-worker) tarvitsevat VRL-tunnukset erikseen —
 niitä EI jaeta automaattisesti kahden eri Cloudflare-tuotteen (Pages / Worker) välillä.
-Aja nämä itse omassa terminaalissasi (ei tämän keskustelun kautta — salasana ei kuulu
-liikkua chatin läpi):
+Aja nämä itse omassa terminaalissasi, älä liitä salasanoja chattiin tai committeihin:
 
 ```bash
 # Pages-projekti
-npx wrangler pages secret put VRL_BASE_URL  --project-name=oakh4632
-npx wrangler pages secret put VRL_IDENTITY  --project-name=oakh4632
-npx wrangler pages secret put VRL_PASSWORD  --project-name=oakh4632
+npx wrangler pages secret put VRL_BASE_URL  --project-name=<projekti>
+npx wrangler pages secret put VRL_IDENTITY  --project-name=<projekti>
+npx wrangler pages secret put VRL_PASSWORD  --project-name=<projekti>
+
+# Hallintasivujen admin-tunnus (ks. functions/_middleware.js) - vain Pages-projektissa
+npx wrangler pages secret put ADMIN_USER      --project-name=<projekti>
+npx wrangler pages secret put ADMIN_PASSWORD  --project-name=<projekti>
 
 # Turnstile-bottitarkistus (ks. "Tietoturva" alla) - vain Pages-projektissa, cron-worker
 # ei renderöi lomakkeita eikä siis tarvitse näitä
-npx wrangler pages secret put TURNSTILE_SITE_KEY    --project-name=oakh4632
-npx wrangler pages secret put TURNSTILE_SECRET_KEY  --project-name=oakh4632
+npx wrangler pages secret put TURNSTILE_SITE_KEY    --project-name=<projekti>
+npx wrangler pages secret put TURNSTILE_SECRET_KEY  --project-name=<projekti>
 
 # Omien hevosten automaattilisäys (ks. "Omien hevosten automaattilisäys" yllä) - vain
 # Pages-projektissa, cron-worker ei lisää osallistujia
-npx wrangler pages secret put OMA_RATSASTAJA_NIMI        --project-name=oakh4632
-npx wrangler pages secret put OMA_RATSASTAJA_VRL_TUNNUS  --project-name=oakh4632
+npx wrangler pages secret put OMA_RATSASTAJA_NIMI        --project-name=<projekti>
+npx wrangler pages secret put OMA_RATSASTAJA_VRL_TUNNUS  --project-name=<projekti>
+# (valinnainen) npx wrangler pages secret put OMAT_HEVOSET_API_URL --project-name=<projekti>
 
 # Cron-worker
 cd cron
@@ -190,7 +225,7 @@ npx wrangler secret put VRL_PASSWORD
 
 **`VRL_BASE_URL` tuotannossa on `https://virtuaalihevoset.net`** — ei `http://localhost`
 eikä `http://host.docker.internal`. Cloudflaren palvelimet eivät pääse käsiksi omaan
-koneesi paikalliseen kehitysympäristöön (`vrlv3-update`-repon `docker compose`), joten
+koneesi paikalliseen VRL-kehitysympäristöön (erillinen repo, `docker compose`), joten
 `localhost`-osoite toimii vain lokaalissa `wrangler pages dev` / `wrangler dev` -ajossa
 (ks. alla), ei julkaistussa versiossa.
 
@@ -199,7 +234,8 @@ koneesi paikalliseen kehitysympäristöön (`vrlv3-update`-repon `docker compose
 ```bash
 cd kilpailukeskus
 cp .dev.vars.example .dev.vars     # täytä oikeat/testitunnukset, ei koskaan gitiin
-npx wrangler d1 execute oakh4632-db --local --file=migrations/0001_init.sql
+# aja kaikki migraatiot järjestyksessä lokaaliin kantaan:
+for f in migrations/*.sql; do npx wrangler d1 execute <tietokanta> --local --file="$f"; done
 npm run dev                         # http://127.0.0.1:8788
 
 # toisessa ikkunassa, cron-workerin testaus samaa lokaalia D1:tä vasten:
@@ -216,6 +252,16 @@ curl -X POST http://127.0.0.1:8789/aja   # laukaisee arvonnan/tulosten lähetyks
 `wrangler pages dev` lukee `.dev.vars`:n automaattisesti. `.dev.vars` on `.gitignore`:ssä —
 älä koskaan committaa oikeita tunnuksia.
 
+Huom: `npm run db:migrate:local` / `db:migrate:remote` ajavat vain `0001_init.sql`:n.
+
+E2E-testit (`test/`) ajetaan paikallista ympäristöä vasten (`wrangler pages dev` + cron
+dev worker + lokaali VRL-devympäristö), ks. tiedostojen alun kommentit:
+
+```bash
+node test/e2e_taytto_ja_tulokset.js
+node test/e2e_omat_hevoset.js
+```
+
 ## Tietoturva
 
 - `cron`-workerin `POST /aja` -reitti ei ole tällä hetkellä suojattu millään
@@ -224,6 +270,8 @@ curl -X POST http://127.0.0.1:8789/aja   # laukaisee arvonnan/tulosten lähetyks
   kohta itsestään, ei tuhoa dataa), mutta jos tämä huolestuttaa, suojaa reitti esim. jaetulla
   salaisuudella (`Authorization`-otsake, verrataan `env.AJA_SALAISUUS`-secrettiin) tai
   Cloudflare Accessilla.
+- Hallintasivut (`/kilpailut/*`, `/lajit/*`) vaativat admin-kirjautumisen (`ADMIN_USER` /
+  `ADMIN_PASSWORD`). Jos niitä ei ole asetettu, hallintasivuille ei pääse lainkaan.
 - Kilpailukeskuksen ilmoittautumissivuilla ei ole kirjautumista/pääsynvalvontaa (kuka tahansa
   linkin saanut voi ilmoittautua) — tarkoituksenmukaista julkiselle ilmoittautumiselle, mutta
   huomioi tämä ennen linkin jakamista.

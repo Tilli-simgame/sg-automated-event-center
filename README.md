@@ -1,4 +1,13 @@
-# send-application
+# vrl-kilpatalli
+
+Työkaluja VRL:n (Virtuaalihevoset) kilpailutoiminnan automatisointiin:
+
+- **Kilpailukeskus** (`kilpailukeskus/`) — Cloudflare Pages + D1 -sovellus, jossa järjestäjä
+  luo kilpailut, kilpailijat ilmoittautuvat ja tulokset arvotaan ja lähetetään VRL:ään
+  automaattisesti. Ks. [kilpailukeskus/README.md](kilpailukeskus/README.md).
+- **CLI-skriptit ja hallintapaneeli** (repon juuri) — kuvattu tässä tiedostossa.
+
+## CLI-skriptit
 
 Itsenäisiä Node.js-skriptejä, joilla toinen järjestelmä voi automatisoida VRL:n
 kilpailutoiminnan lomakkeita HTTP-kutsuilla:
@@ -7,11 +16,9 @@ kilpailutoiminnan lomakkeita HTTP-kutsuilla:
   (`/kilpailutoiminta/ilmoita_kilpailut/perinteiset`), ks. [Kilpailun ilmoittaminen](#kilpailun-ilmoittaminen).
 - **Tulosten ilmoittaminen** — "Ilmoita tulokset" -lomake
   (`/kilpailutoiminta/ilmoita_tulokset/{id}`), ks. [Tulosten ilmoittaminen](#tulosten-ilmoittaminen).
-  Tarkoitettu mm. tulevan kisakeskus-automaation (VIP:n umpeutumisen jälkeen arvottujen
-  tulosten lähetys) testaamiseen.
+  Samaa logiikkaa käyttää myös Kilpailukeskuksen automaattinen tulosten lähetys.
 
-Kumpikaan skripti ei ole osa CodeIgniter/FuelCMS-sovellusta eikä riipu mistään muusta tämän
-repon tiedostosta — ne tekevät samat HTTP-kutsut kuin selaimessa täytetty lomake tekisi
+Kumpikaan skripti ei ole osa VRL-sivuston (CodeIgniter/FuelCMS) koodia — ne tekevät samat HTTP-kutsut kuin selaimessa täytetty lomake tekisi
 (kirjautuminen istuntoevästeellä + lomakkeen POST-lähetys). Kohdesivuston osoite annetaan
 `--base-url`-parametrina, joten skriptit voidaan ajaa miltä tahansa palvelimelta — sen ei
 tarvitse olla sama palvelin, jossa Virtuaalihevoset pyörii.
@@ -35,6 +42,11 @@ kokeilla lähetystä ilman komentorivivalitsimien muistamista, ks.
 | `panel/server.js` | Web-hallintapaneeli (`/` kilpailu, `/tulokset` tulokset) |
 | `Dockerfile` | `laheta_kilpailu.js`:n kontti |
 | `panel/Dockerfile` | Hallintapaneelin kontti |
+| `kilpailukeskus/` | Cloudflare Pages -kilpailukeskus, ks. [oma README](kilpailukeskus/README.md) |
+| `disciplines_ids.md` | VRL:n lajien id:t ja lyhenteet (taustamateriaali) |
+| `disciplines_classes.md` | Jaoskohtaiset luokkavaihtoehdot (taustamateriaali) |
+| `jaoskohtaiset_luokkarajoitukset.md` | Jaosten luokka-, osallistuja- ja lähtörajat (taustamateriaali) |
+| `sijoittuneet.md` | Sijoittuneiden määrä osallistujamäärän mukaan (taustamateriaali) |
 
 ## Vaatimukset
 
@@ -102,7 +114,7 @@ testata skriptiä lokaalisti ilman että Node pitää asentaa koneelle.
 Rakenna image:
 
 ```bash
-docker build -t vrl-send-application ./send-application
+docker build -t vrl-laheta-kilpailu .
 ```
 
 Aja se (`--rm` siivoaa kontin ajon jälkeen, `--add-host` tekee `host.docker.internal`-nimen
@@ -110,7 +122,7 @@ käytettäväksi myös Linuxilla — Docker Desktopilla Windows/Mac se toimii jo
 
 ```bash
 docker run --rm --add-host=host.docker.internal:host-gateway \
-  vrl-send-application \
+  vrl-laheta-kilpailu \
   --base-url=http://host.docker.internal \
   --identity=VRL-00000 \
   --password=salasana123 \
@@ -122,14 +134,14 @@ docker run --rm --add-host=host.docker.internal:host-gateway \
   --jarj-talli=XXXX0000
 ```
 
-`http://host.docker.internal` osoittaa kontista takaisin isäntäkoneelle, jossa tämän
-repon juuren `docker-compose.yml` julkaisee `apache`-palvelun porttiin `80:80` — eli tämä
-osoittaa suoraan paikalliseen kehitysympäristöön (`docker compose up` pitää olla ajossa).
+`http://host.docker.internal` osoittaa kontista takaisin isäntäkoneelle. Jos VRL-sivuston
+paikallinen kehitysympäristö (erillinen repo, `docker compose`) julkaisee `apache`-palvelun
+porttiin `80:80`, tämä osoittaa suoraan siihen (`docker compose up` pitää olla ajossa).
 
 Ilman parametreja (tai `--help`) kontti tulostaa käyttöohjeen:
 
 ```bash
-docker run --rm vrl-send-application
+docker run --rm vrl-laheta-kilpailu
 ```
 
 **Vaihtoehto: liitä sama Docker-verkko.** Jos `host.docker.internal` ei jostain syystä
@@ -137,15 +149,15 @@ toimi (esim. tietyt Linux-asennukset), voi liittää kontin suoraan kehitysympä
 Docker-verkkoon ja käyttää palvelun nimeä `apache` osoitteena:
 
 ```bash
-docker network ls                    # etsi verkko, esim. vrlv3-update_default
-docker run --rm --network vrlv3-update_default \
-  vrl-send-application --base-url=http://apache ...
+docker network ls                    # etsi kehitysympäristön verkko, esim. <projekti>_default
+docker run --rm --network <projekti>_default \
+  vrl-laheta-kilpailu --base-url=http://apache ...
 ```
 
 ### Lomakkeen validointisäännöt (palvelin tarkistaa nämä)
 
-Nämä tulevat suoraan sivuston lomakevalidoinnista
-(`fuel/application/libraries/Kisajarjestelma.php`), joten skripti ei estä virheellisiä
+Nämä tulevat suoraan VRL-sivuston lomakevalidoinnista (sivuston lähdekoodissa
+`fuel/application/libraries/Kisajarjestelma.php`), joten skripti ei estä virheellisiä
 arvoja etukäteen — palvelin palauttaa virheilmoituksen, joka tulostetaan sellaisenaan:
 
 - `vip` (viimeinen ilmoittautumispäivä) on oltava vähintään **14 vrk** tästä päivästä.
@@ -226,7 +238,7 @@ kukin jaos määrittelee omat sääntönsä.
 Selaimessa "Ilmoita tulokset" on kaksivaiheinen: ensin lähetetään luokkien nimet, minkä
 perusteella palvelin piirtää jokaiselle luokalle omat Osallistujat-/Hylätyt-kentät, jotka
 sitten täytetään ja lähetetään erikseen. Palvelinpuolen käsittelijä
-(`Kilpailutoiminta::_send_result()`, `fuel/application/controllers/Kilpailutoiminta.php`)
+(VRL-sivuston `Kilpailutoiminta::_send_result()`, `fuel/application/controllers/Kilpailutoiminta.php`)
 käsittelee POST-pyynnön kuitenkin suoraan heti kun pyynnössä on jo valmiiksi mukana
 `tulos_N_luokka`/`tulos_N_os`/`tulos_N_hyl`-kentät (N=1,2,3...) - kaksivaiheisuus on siis
 vain selaimen UX:ää varten, ei palvelimen vaatimus. Skripti tuntee luokat etukäteen
@@ -252,8 +264,7 @@ joten sitä ei pidä altistaa julkiseen verkkoon.
 ### Ajo suoraan Nodella
 
 ```bash
-cd send-application
-node panel/server.js
+node panel/server.js     # repon juuresta
 ```
 
 Avaa selaimessa <http://127.0.0.1:4000>. Palvelin sitoutuu oletuksena vain
@@ -263,8 +274,9 @@ Avaa selaimessa <http://127.0.0.1:4000>. Palvelin sitoutuu oletuksena vain
 PORT=5000 HOST=127.0.0.1 node panel/server.js
 ```
 
-**Sivuston osoite tässä tapauksessa: `http://localhost`.** Paneeli itse pyörii nyt
-isäntäkoneella samalla tavalla kuin `docker compose`:n julkaisema `apache`-palvelu
+**Sivuston osoite tässä tapauksessa: `http://localhost`** (paikallista kehitysympäristöä
+vasten). Paneeli itse pyörii nyt isäntäkoneella samalla tavalla kuin `docker compose`:n
+julkaisema `apache`-palvelu
 (portti `80:80`), joten ne näkevät toisensa tavallisen `localhost`:in kautta.
 `host.docker.internal` ei toimi tässä ajotavassa (`getaddrinfo ENOTFOUND
 host.docker.internal`) — se on Dockerin oma erikoisnimi, joka resolvoituu vain kontin
@@ -274,7 +286,7 @@ vain jos ajat paneelin itse Dockerissa, ks. seuraava kohta.
 ### Ajo Dockerissa
 
 ```bash
-docker build -f send-application/panel/Dockerfile -t vrl-panel send-application
+docker build -f panel/Dockerfile -t vrl-panel .
 docker run --rm --add-host=host.docker.internal:host-gateway \
   -p 127.0.0.1:4000:4000 vrl-panel
 ```
@@ -290,8 +302,8 @@ Lomake esitäyttää syötetyt arvot uudelleen onnistuneen/epäonnistuneen lähe
 paitsi salasanan, joka ei koskaan tallennu eikä näy takaisin sivulla.
 
 **Jaos-pudotusvalikko (`/`).** "Jaos"-kenttä on valmiiksi pudotusvalikko, ei arvattava id —
-vaihtoehdot tulevat kovakoodatusta listasta `lib/jaokset.js` (lähde:
-`database/5 from_scratch_insert.sql`, taulu `vrlv3_kisat_jaokset`). Näyttelyjaos (NJ) on
+vaihtoehdot tulevat kovakoodatusta listasta `lib/jaokset.js` (lähde: VRL-sivuston
+tietokannan taulu `vrlv3_kisat_jaokset`). Näyttelyjaos (NJ) on
 jätetty pois tahallaan, koska se ei kelpaa "perinteiset kilpailut" -reitille (ks. tiedoston
 kommentti). Jos jaoksia joskus lisätään/poistetaan tuotannossa, päivitä lista käsin.
 
@@ -303,8 +315,12 @@ sivustoon. Kopioi `tulokset-testi.txt`-tiedoston sisältö kenttiin testausta va
 
 ## CSRF
 
-CSRF-suojaus on tällä hetkellä pois päältä sivuston konfiguraatiossa
+CSRF-suojaus on tällä hetkellä pois päältä VRL-sivuston konfiguraatiossa
 (`fuel/application/config/config.php`, `$config['csrf_protection'] = FALSE`), joten
-kumpikaan skripti ei käsittele CSRF-tokenia. Jos suojaus otetaan joskus käyttöön,
+kumpikaan skripti (eikä Kilpailukeskus) ei käsittele CSRF-tokenia. Jos suojaus otetaan joskus käyttöön,
 molemmat (`lib/http_client.js`:n `kirjaudu()` sekä lomakkeiden POST-lähetykset) pitää
 päivittää lukemaan token lomakesivulta ennen POST-lähetystä.
+
+## Lisenssi
+
+[MIT](LICENSE)

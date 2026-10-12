@@ -1,0 +1,21 @@
+# Paikalliset työkalukansiot
+.claude/
+.wrangler/
+
+# Riippuvuudet
+node_modules/
+
+# Salaisuudet / ympäristömuuttujat
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+!.env.example
+
+# Käyttöjärjestelmä- ja editoritiedostot
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

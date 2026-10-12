@@ -1,6 +1,7 @@
 {
   "name": "oakh4632-kilpailukeskus",
   "private": true,
+  "license": "MIT",
   "version": "0.1.0",
   "description": "Oak Hill Event Park (OAKH4632) -- Virtuaalinen Kilpailukeskus. Cloudflare Pages + D1.",
   "scripts": {
