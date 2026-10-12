@@ -1,0 +1,13 @@
+name = "oakh4632-cron"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# Joka 15. minuutti: tarkistaa VIP:n umpeutumisen / täyttyneet luokat, arpoo ja lähettää
+# tulokset automaattisesti. Muuta väliä tarpeen mukaan (ks. https://developers.cloudflare.com/workers/configuration/cron-triggers/).
+[triggers]
+crons = ["*/15 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oakh4632-db"
+database_id = "450154a3-e94c-4db0-9402-1b5a36562560"

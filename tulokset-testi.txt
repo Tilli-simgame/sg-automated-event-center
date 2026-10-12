@@ -1,0 +1,40 @@
+# Testidataa "Ilmoita tulokset" -automaation kokeiluun (send-application).
+#
+# Muoto: rivit "LUOKKA:", "OSALLISTUJAT:" ja valinnainen "HYLÄTYT:" merkitsevät lohkot.
+# '#'-alkuiset rivit ja tyhjät rivit ohitetaan, voit lisätä niitä vapaasti selkeyden vuoksi.
+# Osallistujat/hylätyt-tekstin muoto on vapaa - jaoksen omien sääntöjen mukainen, VRL ei
+# pakota mitään globaalia rakennetta (ks. README.md).
+#
+# Käyttö CLI:llä:
+#   node laheta_tulokset.js --base-url=http://localhost --identity=VRL-00000 \
+#     --password=... --kisa-id=900009 --tiedosto=tulokset-testi.txt
+#
+# Tai kopioi kunkin luokan OSALLISTUJAT-/HYLÄTYT-lohkon sisältö paneelin
+# (panel/server.js, osoite /tulokset) vastaaviin kenttiin sen jälkeen kun olet
+# kirjoittanut luokkien nimet "Luokat"-kenttään ja painanut "Näytä luokkakentät".
+
+LUOKKA: 1. Helppo A
+
+OSALLISTUJAT:
+1. VH03-028-8756 Kesäyön Uni - Talli Kultasade - 245p
+2. VH04-112-3391 Metsän Kuningas - Ratsutila Hopeahanka - 238p
+3. VH02-987-1204 Auringon Poika - Talli Kultasade - 231p
+4. VH05-441-7723 Tuulen Tytär - Ratsutila Hopeahanka - 219p
+
+HYLÄTYT:
+VH06-220-0091 Yön Varjo - Talli Mustapilvi - 3 kaatoa
+
+LUOKKA: 2. Vaativa A
+
+OSALLISTUJAT:
+1. VH02-987-1204 Auringon Poika - Talli Kultasade - 251p
+2. VH03-028-8756 Kesäyön Uni - Talli Kultasade - 244p
+3. VH07-330-5512 Meren Helmi - Ratsutila Aallokko - 240p
+
+HYLÄTYT:
+
+LUOKKA: 3. Avoin luokka
+
+OSALLISTUJAT:
+1. VH05-441-7723 Tuulen Tytär - Ratsutila Hopeahanka - 260p
+2. VH04-112-3391 Metsän Kuningas - Ratsutila Hopeahanka - 255p

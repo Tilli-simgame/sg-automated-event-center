@@ -1,0 +1,24 @@
+
+VRL_BASE_URL=http://localhost
+VRL_IDENTITY=VRL-00000
+VRL_PASSWORD=salasana123
+
+# Suojaa hallintasivut ("/" ja "/kilpailut/*") HTTP Basic Authilla, ks. functions/_middleware.js.
+ADMIN_USER=vaihda-tama
+ADMIN_PASSWORD=vaihda-tama
+
+# Omien hevosten automaattilisäys (ks. lib/omat_hevoset.js) - kun kilpailulle löytyy
+# VRL-kisa-id, järjestäjän omat hevoset haetaan ulkoisesta rajapinnasta ja lisätään
+# automaattisesti niiden lajitasoa vastaaviin luokkiin. Näillä täytetään lisättävän
+# osallistujarivin ratsastaja-osuus ("Nimi (VRL-tunnus) - Hevosen nimi VH-tunnus").
+OMA_RATSASTAJA_NIMI=Matti Meikäläinen
+OMA_RATSASTAJA_VRL_TUNNUS=VRL-123456
+
+# Cloudflare Turnstile -bottitarkistus julkiselle ilmoittautumislomakkeelle
+# (ks. lib/turnstile.js ja functions/kilpailut/[id]/ilmoittaudu.js). Molemmat tyhjänä =
+# tarkistus pois käytöstä (näin oletuksena paikallisessa kehityksessä). Jos haluat testata
+# tarkistusta lokaalisti, käytä Cloudflaren dokumentoituja testiavaimia
+# (https://developers.cloudflare.com/turnstile/troubleshooting/testing/) - älä koskaan
+# oikeita tuotantoavaimia täällä.
+# TURNSTILE_SITE_KEY=1x00000000000000000000AA
+# TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

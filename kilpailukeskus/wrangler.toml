@@ -1,0 +1,8 @@
+name = "oakh4632"
+pages_build_output_dir = "public"
+compatibility_date = "2024-09-23"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oakh4632-db"
+database_id = "450154a3-e94c-4db0-9402-1b5a36562560"
