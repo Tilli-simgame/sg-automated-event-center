@@ -8,11 +8,17 @@
  * koska VRL:n sivulta klikkaavat kilpailijat eivät ole Kilpailukeskuksen käyttäjiä.
  */
 
-import { getKilpailuByKutsu, listLuokat, listOsallistujat, listTulokset, listLajit } from '../../../../lib/db.js';
+import { getKilpailuByKutsu, listLuokat, listOsallistujat, listTulokset, listLajit, listRyppaanKilpailut } from '../../../../lib/db.js';
 import { yritaHakeaVrlKisaId } from '../../../../lib/vrl_kisa_id_haku.js';
 import { kokoaJaokset } from '../../../../lib/kilpailu_lomake.js';
 import { SUHTEUTETTU_ARVONTATAPA, kuvausTekstiJaokselle } from '../../../../lib/rmp_arvonta.js';
-import { hevostaRatsastajaaKohtiLuokassa, sijoittuneidenMaara } from '../../../../lib/saannot.js';
+import {
+  hevostaRatsastajaaKohtiLuokassa,
+  sijoittuneidenMaara,
+  pisteetSijalle,
+  pistejakoTeksti,
+  ilmoittautuminenPaattynyt,
+} from '../../../../lib/saannot.js';
 import { escHtml, sivu, vastaus, ilmoittautumislomakeHtml } from '../../../../lib/html.js';
 import { onkoAdminKirjautunut } from '../../../../lib/admin_auth.js';
 
@@ -90,6 +96,33 @@ export async function onRequestGet({ request, params, env }) {
     .map(({ luokka }) => luokka);
   // Tunnuksettomalla lajilla (ks. migrations/0018_laji_ilman_tunnuksia.sql) oletusteksti ei saa
   // pyytää VRL-/VH-tunnuksia, vaikka järjestäjä ei olisi kuvannut omaa osallistumismuotoa.
+  // Kisarypäs (ks. migrations/0022_kisaryppaat.sql): lomakkeella voi ilmoittautua kerralla
+  // kaikkiin ryppään avoimiin kilpailuihin. Esikatselussa näytetään koko rypäs.
+  const ryppaanKilpailut = await listRyppaanKilpailut(env.DB, kilpailu.rypas_id);
+  const lomakkeenRypas = (
+    kilpailu.tila === 'avoinna'
+      ? ryppaanKilpailut.filter((k) => k.tila === 'avoinna' && !ilmoittautuminenPaattynyt(k))
+      : ryppaanKilpailut
+  ).map((k) => ({ id: k.id, nimi: k.nimi, kp: k.kp }));
+
+  // Ryppääseen ilmoittautumisen jälkeen (ks. [id]/ilmoittaudu.js) URL kertoo luokat, joihin ei
+  // ilmoitettu koska ne olivat täynnä - teksti kootaan kannasta, vain ryppään omista luokista.
+  const ohitetutIdt = new Set(
+    (new URL(request.url).searchParams.get('ohitetut') || '').split(',').filter((v) => /^\d+$/.test(v)).map(Number)
+  );
+  const ohitetutNimet = [];
+  if (ohitetutIdt.size) {
+    for (const k of ryppaanKilpailut) {
+      const kLuokat = k.id === kilpailu.id ? luokat : await listLuokat(env.DB, k.id);
+      kLuokat.filter((l) => ohitetutIdt.has(l.id)).forEach((l) => ohitetutNimet.push(`${k.nimi}: ${l.nimi}`));
+    }
+  }
+  const ohitetutViesti = ohitetutNimet.length
+    ? {
+        onnistui: false,
+        teksti: `Ilmoittautuminen tallennettiin, mutta näihin luokkiin ei ilmoitettu, koska niissä ei ollut tilaa: ${ohitetutNimet.join(', ')}.`,
+      }
+    : undefined;
   const osallistumismuoto = villiLaji
     ? villiLaji.osallistumismuoto || (villiLaji.ilman_tunnuksia ? 'Ratsastajan nimi - Hevosen nimi' : '')
     : '';
@@ -100,10 +133,16 @@ export async function onRequestGet({ request, params, env }) {
             palaaPolku,
             turnstileSiteKey: env.TURNSTILE_SITE_KEY,
             osallistumismuoto,
+            rypasKilpailut: lomakkeenRypas,
           })
         : '<p class="pieni"><strong>Kaikki luokat ovat täynnä.</strong></p>'
       : ESIKATSELU_TILAT.has(kilpailu.tila)
-        ? ilmoittautumislomakeHtml(kilpailu.id, luokat, { disabled: true, palaaPolku, osallistumismuoto })
+        ? ilmoittautumislomakeHtml(kilpailu.id, luokat, {
+            disabled: true,
+            palaaPolku,
+            osallistumismuoto,
+            rypasKilpailut: lomakkeenRypas,
+          })
         : '';
   const osallistujatHtml = `
     <h2>Osallistujat</h2>
@@ -113,7 +152,10 @@ export async function onRequestGet({ request, params, env }) {
           const maaraTeksti = luokka.max_osallistujia
             ? `${osallistujat.length}/${luokka.max_osallistujia}`
             : `${osallistujat.length} (ei ylärajaa)`;
-          const rivit = tulokset || osallistujat;
+          // Hylätyt (sija null, ks. lib/kilpailun_arvonta.js:n merkitseHylatyt) näytetään omana
+          // listanaan sijoitusjärjestyksen alla, ilman järjestysnumeroa.
+          const rivit = tulokset ? tulokset.filter((t) => t.sija != null) : osallistujat;
+          const hylatyt = tulokset ? tulokset.filter((t) => t.sija == null) : [];
           const sijoittuneidenLkm = tulokset ? sijoittuneidenMaara(tulokset.length) : 0;
           // Ennen arvontaa (tulokset === null) rivit on vain ilmoittautumisjärjestys, ei
           // sijoitusjärjestys - siksi <ul> (pallot) eikä <ol> (numerot), ettei kukaan luule
@@ -125,14 +167,24 @@ export async function onRequestGet({ request, params, env }) {
             rivit.length
               ? `<${listaTagi} class="tulokset">${rivit
                   .map((r, i) => {
+                    // Villin lajin pistejako (ks. lib/saannot.js:n pisteetSijalle) - vain tuloksille.
+                    const p = tulokset ? pisteetSijalle(villiLaji, r.sija) : null;
+                    const pisteHtml = p != null ? ` <span class="pieni">(${p} p.)</span>` : '';
                     if (i === 0 && sijoittuneidenLkm > 0)
-                      return `<li><strong>${escHtml(r.nimi)} <i class="fa-solid fa-trophy"></i></strong></li>`;
+                      return `<li><strong>${escHtml(r.nimi)} <i class="fa-solid fa-trophy"></i></strong>${pisteHtml}</li>`;
                     if (i < sijoittuneidenLkm)
-                      return `<li><strong>${escHtml(r.nimi)} <i class="fa-solid fa-award"></i></strong></li>`;
-                    return `<li>${escHtml(r.nimi)}</li>`;
+                      return `<li><strong>${escHtml(r.nimi)} <i class="fa-solid fa-award"></i></strong>${pisteHtml}</li>`;
+                    return `<li>${escHtml(r.nimi)}${pisteHtml}</li>`;
                   })
                   .join('')}</${listaTagi}>`
               : ' <span class="pieni">ei vielä osallistujia</span>'
+          }
+          ${
+            hylatyt.length
+              ? `<p class="pieni" style="margin-bottom:0">Hylätyt:</p><ul class="tulokset">${hylatyt
+                  .map((r) => `<li>${escHtml(r.nimi)}</li>`)
+                  .join('')}</ul>`
+              : ''
           }
         </li>`;
         })
@@ -175,6 +227,8 @@ export async function onRequestGet({ request, params, env }) {
           .map((r) => `<li>${escHtml(r)}</li>`)
           .join('')
       : '';
+  const pistejako = pistejakoTeksti(villiLaji);
+  const pistejakoHtml = pistejako ? `<li>Pisteet: ${escHtml(pistejako)}</li>` : '';
   // Nämä kolme sääntöä koskevat vain VRL:n omia jaoksia - villeillä lajeilla (ks.
   // migrations/0013_lajit.sql) ilmoittautuminen avataan suoraan eikä kutsua lähetetä VRL:n
   // kisakalenteriin, joten VRL-/VH-tunnusvaatimus ja kalenterimaininta olisivat harhaanjohtavia.
@@ -193,6 +247,7 @@ export async function onRequestGet({ request, params, env }) {
       <li>Sama hevonen voi ilmoittautua samaan luokkaan vain kerran.</li>
       ${arjLisasaantoHtml}
       ${villinLajinSaannotHtml}
+      ${pistejakoHtml}
       ${vrlSaannotHtml}
       ${arvontaSaantoHtml}
       ${vrlKalenteriSaantoHtml}
@@ -211,6 +266,26 @@ export async function onRequestGet({ request, params, env }) {
          ja hyväksyy lähetyksen <a href="/kilpailut/${kilpailu.id}">kilpailun hallintasivulta</a>.</div>`
         : '';
 
+  const kutsuPolkuKilpailulle = (k) => {
+    try {
+      return new URL(k.kutsu_url).pathname;
+    } catch {
+      return '';
+    }
+  };
+  const rypasHtml =
+    ryppaanKilpailut.length > 1
+      ? `<p><strong>Kisarypäs:</strong> tämä kilpailu kuuluu ${ryppaanKilpailut.length} kilpailun ryppääseen -
+         samalla ilmoittautumisella voi osallistua kaikkiin tai valittuihin ryppään kilpailuihin.</p>
+         <ul>${ryppaanKilpailut
+           .map((k) =>
+             k.id === kilpailu.id
+               ? `<li><strong>${escHtml(k.nimi)}</strong> (tämä kilpailu)</li>`
+               : `<li><a href="${escHtml(kutsuPolkuKilpailulle(k))}">${escHtml(k.nimi)}</a></li>`
+           )
+           .join('')}</ul>`
+      : '';
+
   const sisalto = `
     ${esikatseluViesti}
     <h1>${escHtml(kilpailu.nimi)}</h1>
@@ -226,6 +301,7 @@ export async function onRequestGet({ request, params, env }) {
     ${kilpailu.info ? `<p>${escHtml(kilpailu.info)}</p>` : ''}
     ${kilpailu.lisatietoja ? `<p>${escHtml(kilpailu.lisatietoja)}</p>` : ''}
     ${kilpailu.takaaja ? `<p class="pieni">Takaaja: ${escHtml(kilpailu.takaaja)}</p>` : ''}
+    ${rypasHtml}
     <h2>Luokat</h2>
     <ul>${luokkaRivit}</ul>
     ${saannotHtml}
@@ -237,5 +313,7 @@ export async function onRequestGet({ request, params, env }) {
     ${osallistujatHtml}
   `;
 
-  return vastaus(sivu({ otsikko: kilpailu.nimi, sisalto, turnstileSiteKey: env.TURNSTILE_SITE_KEY, kirjautunut }));
+  return vastaus(
+    sivu({ otsikko: kilpailu.nimi, sisalto, viesti: ohitetutViesti, turnstileSiteKey: env.TURNSTILE_SITE_KEY, kirjautunut })
+  );
 }

@@ -23,13 +23,14 @@ const JAOKSET = [
   { id: '4', lyhenne: 'VVJ', nimi: 'Valjakkoajojaos' },
   { id: '5', lyhenne: 'WRJ', nimi: 'Westernjaos' },
   { id: '6', lyhenne: 'ARJ', nimi: 'Askellajiratsastusjaos' },
+  { id: '8', lyhenne: 'TYH', nimi: 'Työhevosyhdistys' },
 ];
 
 // Erottaa VRL:n viralliset jaokset järjestäjän itse luomista "villeistä" lajeista (ks.
 // migrations/0013_lajit.sql) - villejä lajeja ei koskaan lähetetä VRL:n kisakalenteriin
 // eikä niille tehdä VRL-kisa-id:n automaattihakua/tulostenlähetystä (ks.
 // functions/kilpailut/[id]/laheta-vrl.js, lib/vrl_kisa_id_haku.js,
-// lib/kilpailun_tulosten_lahetys.js). Kaikki muut id:t kuin nämä kuusi kiinteää ovat siis
+// lib/kilpailun_tulosten_lahetys.js). Kaikki muut id:t kuin nämä kiinteät ovat siis
 // aina villejä - villin lajin id ei koskaan voi osua näihin (ks. lib/db.js:n seuraavaLajiId,
 // joka alkaa 9900:sta).
 function onkoVirallinenJaos(jaosId) {

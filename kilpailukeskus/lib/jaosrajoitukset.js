@@ -3,8 +3,7 @@
 /**
  * Jaoskohtaiset VRL-rajoitukset "Uusi kilpailu" -lomaketta ja ilmoittautumisen validointia
  * varten. Lähde: ../../jaoskohtaiset_luokkarajoitukset.md. Avaimet vastaavat ./jaokset.js:n
- * jaos-id:itä - TYH ja MEJ on jätetty pois samasta syystä kuin ./luokkavaihtoehdot.js:ssä:
- * ne eivät ole valittavissa "Ilmoita perinteiset kilpailut" -lomakkeella.
+ * jaos-id:itä. MEJ (id 9) puuttuu toistaiseksi, koska sitä ei ole lisätty ./jaokset.js:ään.
  *
  * - maxLuokkia: enimmäismäärä luokkia yhdessä kilpailussa.
  * - maxOsallistujiaPerLuokka: enimmäismäärä osallistujia yhdessä luokassa (kaikilla
@@ -21,6 +20,7 @@ const JAOS_RAJOITUKSET = {
   '4': { maxLuokkia: 15, maxOsallistujiaPerLuokka: 100, maxLahtojaPerHevonen: 2 }, // VVJ
   '5': { maxLuokkia: 15, maxOsallistujiaPerLuokka: 100, maxLahtojaPerHevonen: 6 }, // WRJ
   '6': { maxLuokkia: 100, maxOsallistujiaPerLuokka: 100, maxLahtojaPerHevonen: 10 }, // ARJ
+  '8': { maxLuokkia: 15, maxOsallistujiaPerLuokka: 100, maxLahtojaPerHevonen: 15 }, // TYH
 };
 
 export { JAOS_RAJOITUKSET };

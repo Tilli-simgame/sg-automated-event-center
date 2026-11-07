@@ -63,7 +63,53 @@ function jasennaIlmoittautuminen(nimi) {
   return { vrlTunnus, vhTunnus: vhTunnusRaw.toUpperCase() };
 }
 
+// Villin lajin pisteiden jako (ks. migrations/0021_laji_pisteet.sql). Lista tallennetaan
+// pilkuilla eroteltuna tekstinä, esim. "10,9,8" - palauttaa kokonaislukutaulukon, tai null
+// jos jokin arvo ei ole ei-negatiivinen kokonaisluku (käytetään lomakkeen validoinnissa).
+function jasennaPisteet(teksti) {
+  const osat = (teksti || '')
+    .split(/[,;\s]+/)
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (!osat.every((o) => /^\d+$/.test(o))) return null;
+  return osat.map((o) => parseInt(o, 10));
+}
+
+function onkoPistejako(laji) {
+  return Boolean(laji) && ((jasennaPisteet(laji.pisteet) || []).length > 0 || laji.pisteet_muille > 0);
+}
+
+// Pisteet sijalle: sijoituslistan mukaan, sen ulkopuolelle jääneille hyväksytyille
+// pisteet_muille, hylätyille (sija null) 0. Palauttaa null jos lajilla ei ole pistejakoa.
+function pisteetSijalle(laji, sija) {
+  if (!onkoPistejako(laji)) return null;
+  if (sija == null) return 0;
+  const lista = jasennaPisteet(laji.pisteet) || [];
+  return sija <= lista.length ? lista[sija - 1] : laji.pisteet_muille;
+}
+
+// Kilpailukutsun Säännöt-osion teksti, esim. "1. 10 p., 2. 9 p., muut hyväksytyt 1 p.,
+// hylätyt 0 p." - tyhjä jos lajilla ei ole pistejakoa.
+function pistejakoTeksti(laji) {
+  if (!onkoPistejako(laji)) return '';
+  const osat = (jasennaPisteet(laji.pisteet) || []).map((p, i) => `${i + 1}. ${p} p.`);
+  osat.push(`${osat.length ? 'muut hyväksytyt' : 'kaikki hyväksytyt'} ${laji.pisteet_muille} p.`);
+  osat.push('hylätyt 0 p.');
+  return osat.join(', ');
+}
+
+// Ilmoittautuminen päättyy VIP-päivän lopussa (UTC), samalla hetkellä kun cron saa arpoa
+// kilpailun (ks. lib/db.js:n listArvontaaOdottavat) - kilpailu voi silti olla vielä tilassa
+// 'avoinna' cronin seuraavaan ajoon asti, joten tila yksin ei riitä.
+function ilmoittautuminenPaattynyt(kilpailu, nyt = Date.now()) {
+  return nyt >= Date.parse(`${kilpailu.vip_iso}T00:00:00Z`) + 24 * 60 * 60 * 1000;
+}
+
 export {
+  ilmoittautuminenPaattynyt,
+  jasennaPisteet,
+  pisteetSijalle,
+  pistejakoTeksti,
   ratsastajanMaxHevoset,
   hevostaRatsastajaaKohtiLuokassa,
   sijoittuneidenMaara,

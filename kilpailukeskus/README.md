@@ -109,6 +109,25 @@ pudotusvalikosta. Yksi paikoista voidaan merkitä oletukseksi. Tiedot kopioidaan
 sitä luotaessa, joten paikan myöhempi muokkaus tai poisto ei muuta jo luotuja kilpailuja
 (ks. `migrations/0010_kilpailupaikat.sql`).
 
+## Kisaryppäät
+
+"Uusi kilpailu" -lomakkeen Kisarypäs-osiolla (valintaruutu "Luo kisarypäs", oletuksena pois
+päältä = yksittäinen kilpailu) voi luoda kerralla 2-31 saman lajin kilpailua
+samoilla tiedoilla ja luokilla (`0022_kisaryppaat.sql`). Lomakkeen kilpailupäivä on ryppään
+ensimmäinen päivä, ja loput päivät tulevat valitulla välillä (joka päivä / joka toinen päivä /
+kerran viikossa) tai itse valittuina. Muiden kilpailujen VIP on valinnan mukaan joko yhtä monta
+päivää ennen kunkin kilpailupäivää kuin lomakkeella (oletus) tai sama kuin ensimmäisellä kilpailulla. Nimessä oleva ensimmäinen kilpailupäivä vaihdetaan kunkin
+kilpailun omaksi päiväksi (muuten päivä lisätään nimen perään).
+
+Jokainen ryppään kilpailu on muuten itsenäinen (oma kutsu, VRL-lähetys, arvonta ja muokkaus).
+Hallintasivulta voi hyväksyä/julkaista kerralla kaikki ryppään julkaisemattomat kilpailut.
+Ilmoittautumislomakkeella on oletuksena valittuna "Osallistun kaikkiin kisaryppään kisoihin",
+tai kilpailija voi valita kisat itse. Rivit ilmoitetaan jokaisen valitun avoimen kilpailun
+samannimiseen luokkaan (järjestyksestä riippumatta, myös aiempiin kisoihin). Kilpailut joiden
+ilmoittautuminen on päättynyt (VIP-päivä ohi) jätetään pois, ja ryppään kilpailussa täynnä oleva
+luokka ohitetaan - ohitetut kerrotaan kutsusivulla. Muut säännöt tarkistetaan
+kilpailukohtaisesti, ja jos yksikin kilpailu hylkää lähetyksen, mitään ei tallenneta.
+
 ## Omat ("villit") lajit
 
 `/lajit` hallinnoi järjestäjän itse luomia lajeja, jotka eivät ole VRL:n virallisia jaoksia
@@ -118,7 +137,21 @@ VRL:n kisakalenteriin, vaan ilmoittautuminen avataan suoraan. Lajikohtaisesti as
 - luokkavaihtoehdot uuden kilpailun lomakkeelle,
 - säännöt (max osallistujia/luokka, max lähtöjä/hevonen jne., `0014_laji_saannot.sql`),
 - lajin nimi omien hevosten rajapinnassa (`0017_laji_omat_hevoset.sql`),
-- osallistujat ilman VRL-/VH-tunnuksia (`0018_laji_ilman_tunnuksia.sql`).
+- osallistujat ilman VRL-/VH-tunnuksia (`0018_laji_ilman_tunnuksia.sql`),
+- täytehevoset: vähimmäisosallistujamäärä per luokka ja täytehevosen nimi tuloksissa
+  (esim. `Ratsastaja - Täytehevonen`, `{n}` = juokseva numero). Arvonnassa luokkaan lisätään
+  täytehevosia kunnes vähimmäismäärä täyttyy, kuitenkin enintään luokan maksimiin asti
+  (`0019_laji_taytehevoset.sql`),
+- hylättyjen osuus (%): arvonnan jälkeen luokan alhaisimman tuloksen saaneista hylätään
+  `ceil(% × osallistujamäärä)`, esim. 10 % → 20 osallistujasta 2, 21:stä 3
+  (`0020_laji_hylatyt_ja_taytehevosmerkinta.sql`),
+- pisteiden jako: pisteet sijoittain (esim. `10,9,8,7,6,5,4,3,2`) ja pisteet muille
+  hyväksytyille, hylätyt 0 p. Pisteet lasketaan näytettäessä, joten muutos näkyy heti myös jo
+  arvotuissa kilpailuissa (`0021_laji_pisteet.sql`).
+
+Jo arvotun oman lajin kilpailun voi arpoa uudelleen kilpailun sivun "Arvo tulokset uudelleen"
+-napista: vanhat tulokset ja täytehevoset poistetaan ja arvonta tehdään lajin nykyisillä
+asetuksilla. Oikeat osallistujat säilyvät.
 
 Koska villiä kilpailua ei lähetetä VRL:ään, järjestäjä asettaa sen näytettävän tilan
 (odottaa / hyväksytty / tulokset lähetetty) käsin kilpailun sivulta (`0016_villi_tila.sql`).

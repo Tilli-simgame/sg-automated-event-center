@@ -58,6 +58,21 @@ function saannotLomakeHtml(laji) {
         <label class="pieni"><input type="checkbox" name="ilman_tunnuksia" value="1"${laji.ilman_tunnuksia ? ' checked' : ''} style="width:auto">
           Osallistujat ilman VRL-/VH-tunnuksia (omat hevoset muodossa "Ratsastaja - Hevonen", julkisen lomakkeen rivejä ei tarkisteta)
         </label>
+        <label class="pieni">Täytehevoset: vähimmäisosallistujia per luokka (arvonnassa luokkaan lisätään täytehevosia kunnes tämä määrä täyttyy - 0 tai tyhjä = ei täytehevosia)
+          <input type="number" name="min_osallistujia_per_luokka" min="0" value="${laji.min_osallistujia_per_luokka || ''}" placeholder="0">
+        </label>
+        <label class="pieni">Täytehevosen nimi tuloksissa ("{n}" korvataan juoksevalla numerolla, esim. "Täytehevonen {n}")
+          <input name="taytehevonen_nimi" value="${escHtml(laji.taytehevonen_nimi)}" placeholder="Ratsastaja - Täytehevonen">
+        </label>
+        <label class="pieni">Hylättyjä % per luokka (arvonnassa alhaisimman tuloksen saaneista hylätään tämä osuus, pyöristys ylöspäin - esim. 10 % -> 20 osallistujasta 2, 21:stä 3; 0 tai tyhjä = ei hylättyjä)
+          <input type="number" name="hylattyja_prosenttia" min="0" max="100" value="${laji.hylattyja_prosenttia || ''}" placeholder="0">
+        </label>
+        <label class="pieni">Pisteet sijoittain (pilkuilla eroteltuna 1. sijasta alkaen, esim. "10,9,8,7,6,5,4,3,2" - tyhjä = ei sijoituspisteitä)
+          <input name="pisteet" value="${escHtml(laji.pisteet)}" placeholder="10,9,8,7,6,5,4,3,2">
+        </label>
+        <label class="pieni">Pisteet muille hyväksytyille tuloksille (hylätyt eivät saa pisteitä - 0 tai tyhjä = ei pisteitä)
+          <input type="number" name="pisteet_muille" min="0" value="${laji.pisteet_muille || ''}" placeholder="0">
+        </label>
         <button type="submit" style="margin-top:0">Tallenna säännöt</button>
       </form>
     </details>`;

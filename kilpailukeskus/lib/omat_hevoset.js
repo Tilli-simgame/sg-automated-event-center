@@ -35,9 +35,9 @@ import { onkoVirallinenJaos } from './jaokset.js';
 const OMA_TALLI = 'Tilli';
 
 // jaos-id (ks. lib/jaokset.js) -> ulkoisen rajapinnan discipline-parametri. Vain jaokset
-// joita kilpailukeskus tukee (JAOKSET-listan 1-6) on kartoitettu - loput (matkaratsastus,
-// ravit, työhevosajo, laukat, poniravit, maastoeste, näyttelyt) eivät koskaan esiinny
-// kilpailun jaos-kentässä. Huom: ../disciplines_ids.md nimeää jaoksen 5 "lännenratsastus",
+// joita kilpailukeskus tukee (JAOKSET-lista) on kartoitettu - loput (matkaratsastus,
+// ravit, laukat, poniravit, maastoeste, näyttelyt) eivät koskaan esiinny kilpailun
+// jaos-kentässä. Huom: ../disciplines_ids.md nimeää jaoksen 5 "lännenratsastus",
 // mutta rajapinta itse käyttää nimeä "westernratsastus" (todennettu suoraan rajapinnasta -
 // "lännenratsastus" palauttaa aina 0 hevosta vaikka dataa on olemassa).
 const JAOS_LAJIT = {
@@ -47,6 +47,7 @@ const JAOS_LAJIT = {
   4: 'valjakkoajo',
   5: 'westernratsastus',
   6: 'askellajiratsastus',
+  8: 'työhevosajo', // TYH - todennettu rajapinnasta
 };
 
 // Onko kilpailu siinä vaiheessa että omat hevoset lisätään (ks. tiedoston alun kommentti) -
@@ -172,7 +173,9 @@ async function lisaaOmatHevosetAutomaattisesti(env, kilpailu, luokat) {
   let lisatty = 0;
 
   for (const hevonen of hevoset) {
-    const nimi = hevonen.name || '(nimetön)';
+    // Rajapinnan nimissä voi olla rivinvaihtoja (esim. "TuuHa's \n\nMercadona") - VRL:n
+    // tulosteksti on rivi per osallistuja, joten nimi on pidettävä yhdellä rivillä.
+    const nimi = (hevonen.name || '').replace(/\s+/g, ' ').trim() || '(nimetön)';
     const vhTunnus = (hevonen.registration_number || '').toString().toUpperCase();
     const lajitaso = hevonen.discipline_level;
 

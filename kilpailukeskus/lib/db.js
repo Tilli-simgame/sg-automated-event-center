@@ -21,16 +21,34 @@ async function createKilpailu(db, k) {
   const tulos = await db
     .prepare(
       `INSERT INTO kilpailut
-         (nimi, jaos, kp, kp_iso, vip, vip_iso, arvontatapa, jarj_talli, jarj_talli_nimi, jarj_talli_url, kutsu_url, kutsu_numero, info, lisatietoja, takaaja, max_lahtoja_per_hevonen, max_osallistujia_per_luokka, vastuuhenkilo_nimi, vastuuhenkilo_email, tila)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'luonnos')`
+         (nimi, jaos, kp, kp_iso, vip, vip_iso, arvontatapa, jarj_talli, jarj_talli_nimi, jarj_talli_url, kutsu_url, kutsu_numero, info, lisatietoja, takaaja, max_lahtoja_per_hevonen, max_osallistujia_per_luokka, vastuuhenkilo_nimi, vastuuhenkilo_email, rypas_id, tila)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'luonnos')`
     )
     .bind(
       k.nimi, k.jaos, k.kp, k.kpIso, k.vip, k.vipIso, k.arvontatapa, k.jarjTalli, k.jarjTalliNimi, k.jarjTalliUrl,
       k.kutsuUrl, k.kutsuNumero, k.info || null, k.lisatietoja || null, k.takaaja || null, k.maxLahtojaPerHevonen, k.maxOsallistujiaPerLuokka,
-      k.vastuuhenkiloNimi, k.vastuuhenkiloEmail
+      k.vastuuhenkiloNimi, k.vastuuhenkiloEmail, k.rypasId || null
     )
     .run();
   return tulos.meta.last_row_id;
+}
+
+// Kisarypäs (ks. migrations/0022_kisaryppaat.sql) - luodaan ennen ryppään kilpailuja, jotta
+// niille saadaan yhteinen rypas_id.
+async function createKisarypas(db) {
+  const tulos = await db.prepare('INSERT INTO kisaryppaat DEFAULT VALUES').run();
+  return tulos.meta.last_row_id;
+}
+
+// Ryppään kaikki kilpailut kilpailupäivän mukaan järjestettynä - tyhjä lista jos kilpailu ei
+// kuulu ryppääseen (rypasId NULL).
+async function listRyppaanKilpailut(db, rypasId) {
+  if (rypasId == null) return [];
+  const { results } = await db
+    .prepare('SELECT * FROM kilpailut WHERE rypas_id = ? ORDER BY kp_iso, id')
+    .bind(rypasId)
+    .all();
+  return results;
 }
 
 // Kilpailun muokkaus ennen VRL-lähetystä (tila 'luonnos' tai 'vrl_virhe' - ks.
@@ -225,12 +243,27 @@ async function poistaLaji(db, id) {
 async function paivitaLajinSaannot(
   db,
   id,
-  { maxOsallistujiaPerLuokka, maxLahtojaPerHevonen, maxHevostaRatsastajaPerLuokka, osallistumismuoto, saannot, omatHevosetLaji, ilmanTunnuksia }
+  {
+    maxOsallistujiaPerLuokka,
+    maxLahtojaPerHevonen,
+    maxHevostaRatsastajaPerLuokka,
+    osallistumismuoto,
+    saannot,
+    omatHevosetLaji,
+    ilmanTunnuksia,
+    minOsallistujiaPerLuokka,
+    taytehevonenNimi,
+    hylattyjaProsenttia,
+    pisteet,
+    pisteetMuille,
+  }
 ) {
   await db
     .prepare(
       `UPDATE lajit SET max_osallistujia_per_luokka = ?, max_lahtoja_per_hevonen = ?,
-       max_hevosta_ratsastaja_per_luokka = ?, osallistumismuoto = ?, saannot = ?, omat_hevoset_laji = ?, ilman_tunnuksia = ? WHERE id = ?`
+       max_hevosta_ratsastaja_per_luokka = ?, osallistumismuoto = ?, saannot = ?, omat_hevoset_laji = ?, ilman_tunnuksia = ?,
+       min_osallistujia_per_luokka = ?, taytehevonen_nimi = ?, hylattyja_prosenttia = ?,
+       pisteet = ?, pisteet_muille = ? WHERE id = ?`
     )
     .bind(
       maxOsallistujiaPerLuokka,
@@ -240,6 +273,11 @@ async function paivitaLajinSaannot(
       saannot,
       omatHevosetLaji,
       ilmanTunnuksia ? 1 : 0,
+      minOsallistujiaPerLuokka,
+      taytehevonenNimi,
+      hylattyjaProsenttia,
+      pisteet,
+      pisteetMuille,
       id
     )
     .run();
@@ -460,11 +498,85 @@ async function laskeRatsastajanHevoset(db, luokkaId, vrlTunnus) {
   return rivi.n;
 }
 
+// Kilpailun kaikkien luokkien osallistujien tunnukset yhdellä kyselyllä - ilmoittautumisen
+// sääntötarkistukset (ks. functions/kilpailut/[id]/ilmoittaudu.js) lasketaan tästä muistissa,
+// koska rivikohtaiset COUNT-kyselyt ylittävät isolla lähetyksellä (esim. kisarypäs) Workerin
+// yhden pyynnön API-kutsurajan ("Too many API requests by single Worker invocation").
+async function listKilpailunOsallistujaTunnukset(db, kilpailuId) {
+  const { results } = await db
+    .prepare(
+      `SELECT o.luokka_id, o.vrl_tunnus, o.vh_tunnus FROM osallistujat o
+       JOIN luokat l ON l.id = o.luokka_id
+       WHERE l.kilpailu_id = ?`
+    )
+    .bind(kilpailuId)
+    .all();
+  return results;
+}
+
+// Useamman osallistujan lisäys yhtenä D1-batchina (yksi API-kutsu, ja kaikki tai ei mitään).
+// rivit: [{ luokkaId, nimi, vrlTunnus, vhTunnus }]
+async function lisaaOsallistujat(db, rivit) {
+  if (rivit.length === 0) return;
+  const lause = db.prepare('INSERT INTO osallistujat (luokka_id, nimi, vrl_tunnus, vh_tunnus) VALUES (?, ?, ?, ?)');
+  await db.batch(rivit.map((r) => lause.bind(r.luokkaId, r.nimi, r.vrlTunnus, r.vhTunnus)));
+}
+
 async function lisaaOsallistuja(db, luokkaId, nimi, vrlTunnus, vhTunnus) {
   await db
     .prepare('INSERT INTO osallistujat (luokka_id, nimi, vrl_tunnus, vh_tunnus) VALUES (?, ?, ?, ?)')
     .bind(luokkaId, nimi, vrlTunnus, vhTunnus)
     .run();
+}
+
+// Arvonnan lisäämä täytehevonen (ks. lib/kilpailun_arvonta.js ja
+// migrations/0020_laji_hylatyt_ja_taytehevosmerkinta.sql) - merkitään, jotta uudelleenarvonta
+// voi poistaa sen (ks. poistaKilpailunTuloksetJaTaytehevoset).
+async function lisaaTaytehevonen(db, luokkaId, nimi) {
+  await db
+    .prepare('INSERT INTO osallistujat (luokka_id, nimi, taytehevonen) VALUES (?, ?, 1)')
+    .bind(luokkaId, nimi)
+    .run();
+}
+
+// Useampi täytehevonen yhtenä D1-batchina. rivit: [{ luokkaId, nimi }]
+async function lisaaTaytehevoset(db, rivit) {
+  if (rivit.length === 0) return;
+  const lause = db.prepare('INSERT INTO osallistujat (luokka_id, nimi, taytehevonen) VALUES (?, ?, 1)');
+  await db.batch(rivit.map((r) => lause.bind(r.luokkaId, r.nimi)));
+}
+
+// Kilpailun kaikkien luokkien osallistujat yhdellä kyselyllä, luokittain (Map luokkaId -> rivit,
+// järjestys kuten listOsallistujat). Arvonta käyttää tätä, ettei jokaiselle luokalle tehdä omaa
+// kyselyä (Workerin yhden pyynnön API-kutsuraja, cron käsittelee useita kilpailuja kerralla).
+async function listKilpailunOsallistujat(db, kilpailuId) {
+  const { results } = await db
+    .prepare(
+      `SELECT o.* FROM osallistujat o
+       JOIN luokat l ON l.id = o.luokka_id
+       WHERE l.kilpailu_id = ?
+       ORDER BY o.ilmoittautunut_at, o.id`
+    )
+    .bind(kilpailuId)
+    .all();
+  const luokittain = new Map();
+  for (const r of results) {
+    const avain = String(r.luokka_id);
+    if (!luokittain.has(avain)) luokittain.set(avain, []);
+    luokittain.get(avain).push(r);
+  }
+  return luokittain;
+}
+
+// Uudelleenarvontaa varten (ks. functions/kilpailut/[id]/arvo-uudelleen.js): poistaa kilpailun
+// kaikki arvotut tulokset ja arvonnan lisäämät täytehevoset, oikeat osallistujat jäävät.
+async function poistaKilpailunTuloksetJaTaytehevoset(db, kilpailuId) {
+  await db.batch([
+    db.prepare('DELETE FROM tulokset WHERE luokka_id IN (SELECT id FROM luokat WHERE kilpailu_id = ?)').bind(kilpailuId),
+    db
+      .prepare('DELETE FROM osallistujat WHERE taytehevonen = 1 AND luokka_id IN (SELECT id FROM luokat WHERE kilpailu_id = ?)')
+      .bind(kilpailuId),
+  ]);
 }
 
 // Adminin osallistujahallinta (ks. [id]/muokkaa-osallistuja.js, poista-osallistuja.js,
@@ -530,6 +642,19 @@ async function tallennaTulokset(db, luokkaId, sijoitukset) {
   }
 }
 
+// Koko kilpailun arvonnan tallennus yhtenä D1-batchina (yksi API-kutsu, kaikki tai ei mitään):
+// kaikkien luokkien tulokset ja kilpailun merkintä arvotuksi (vrt. tallennaTulokset ja
+// merkitseArvottu). arvotut: [[luokkaId, [{ osallistujaId, sija }]]]
+async function tallennaArvonta(db, kilpailuId, arvotut) {
+  const tulos = db.prepare('INSERT INTO tulokset (luokka_id, osallistuja_id, sija) VALUES (?, ?, ?)');
+  await db.batch([
+    ...arvotut.flatMap(([luokkaId, sijoitukset]) =>
+      sijoitukset.map(({ osallistujaId, sija }) => tulos.bind(luokkaId, osallistujaId, sija))
+    ),
+    db.prepare("UPDATE kilpailut SET tila = 'arvottu', arvottu_at = datetime('now') WHERE id = ?").bind(kilpailuId),
+  ]);
+}
+
 async function merkitseArvottu(db, kilpailuId) {
   await db
     .prepare("UPDATE kilpailut SET tila = 'arvottu', arvottu_at = datetime('now') WHERE id = ?")
@@ -563,9 +688,16 @@ async function listTulokset(db, luokkaId) {
 
 export {
   listTulokset,
+  lisaaTaytehevonen,
+  lisaaTaytehevoset,
+  listKilpailunOsallistujat,
+  tallennaArvonta,
+  poistaKilpailunTuloksetJaTaytehevoset,
   listKilpailut,
   getKilpailu,
   createKilpailu,
+  createKisarypas,
+  listRyppaanKilpailut,
   updateKilpailu,
   seuraavaKutsuNumero,
   getKilpailuByKutsu,
@@ -612,6 +744,8 @@ export {
   onkoHevonenLuokassa,
   laskeRatsastajanHevoset,
   lisaaOsallistuja,
+  lisaaOsallistujat,
+  listKilpailunOsallistujaTunnukset,
   paivitaOsallistuja,
   poistaOsallistuja,
   poistaKilpailunOsallistujat,
