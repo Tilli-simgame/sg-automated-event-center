@@ -118,6 +118,8 @@ async function luoKilpailu() {
     // VRL:n oma validointi (Tallit_model::is_tnro_in_use) tarkistaa vain että tnro on
     // olemassa jossain, ei että se kuuluu kirjautuneelle käyttäjälle.
     jarj_talli: 'TEST2062',
+    jarj_talli_nimi: 'E2E Testitalli',
+    jarj_talli_url: 'https://esimerkki.fi',
     info: 'Automaattitesti - luokkien täyttyminen, arvonta ja tulosten lähetys.',
     takaaja: '',
     vastuuhenkilo_nimi: 'E2E Testaaja',

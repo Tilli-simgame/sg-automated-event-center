@@ -93,6 +93,7 @@ function sivu({ otsikko, sisalto, viesti, turnstileSiteKey, kirjautunut = true }
   <a href="/kilpailut/uusi">+ Uusi kilpailu</a>
   <a href="/kilpailut/kilpailupaikat">Kilpailupaikat</a>
   <a href="/lajit">Omat lajit</a>
+  <a href="/kilpailut/lomalista">Lomalista</a>
   <a href="/rmp">RMP-hevoset</a>
   <form method="post" action="/kirjaudu-ulos"><button type="submit" class="linkkinappi">Kirjaudu ulos</button></form>`
     : '<a href="/kirjaudu">Kirjaudu sisään</a>';
@@ -204,10 +205,59 @@ function tilaBadge(kilpailu) {
 function ilmoittautumislomakeHtml(
   kilpailuId,
   luokat,
-  { disabled = false, palaaPolku = '', turnstileSiteKey = '', osallistumismuoto = '' } = {}
+  { disabled = false, palaaPolku = '', turnstileSiteKey = '', osallistumismuoto = '', rypasKilpailut = [] } = {}
 ) {
   if (luokat.length === 0) return '';
   const disabledAttr = disabled ? ' disabled' : '';
+  // Kisaryppään (ks. migrations/0022_kisaryppaat.sql) avoimet kilpailut, tämä mukaan lukien -
+  // oletuksena ilmoittaudutaan kaikkiin, mutta kilpailija voi valita niistä yhden tai useamman
+  // (ks. [id]/ilmoittaudu.js:n valitseKohdekilpailut). Yhden kilpailun "ryppäässä" ei valittavaa.
+  const valintaId = `rypas-valinta-${kilpailuId}`;
+  const rypasHtml =
+    rypasKilpailut.length > 1
+      ? `
+      <fieldset>
+        <legend>Kisarypäs</legend>
+        <label style="font-weight:normal;display:flex;gap:0.5rem;align-items:flex-start">
+          <input type="radio" name="rypas_valinta" value="kaikki" checked style="width:auto;margin-top:0.2rem"${disabledAttr}>
+          <span>Osallistun kaikkiin kisaryppään kisoihin:
+            ${rypasKilpailut.map((k) => escHtml(`${k.nimi} (${k.kp})`)).join(', ')}</span>
+        </label>
+        <label style="font-weight:normal;display:flex;gap:0.5rem;align-items:flex-start">
+          <input type="radio" name="rypas_valinta" value="valitut" style="width:auto;margin-top:0.2rem"${disabledAttr}>
+          <span>Valitsen kisat itse:</span>
+        </label>
+        <div id="${valintaId}" style="margin-left:1.6rem">
+          ${rypasKilpailut
+            .map(
+              (k) => `
+          <label style="font-weight:normal;display:flex;gap:0.5rem;align-items:center;margin-top:0.3rem">
+            <input type="checkbox" name="rypas_kisa" value="${k.id}" checked disabled style="width:auto;margin:0">
+            ${escHtml(`${k.nimi} (${k.kp})`)}
+          </label>`
+            )
+            .join('')}
+        </div>
+        <p class="pieni">Samat osallistujat ilmoitetaan jokaisen valitun kilpailun samannimiseen luokkaan.</p>
+        ${
+          disabled
+            ? ''
+            : `<script>
+          (function () {
+            const lomake = document.getElementById(${JSON.stringify(valintaId)}).closest('form');
+            function paivita() {
+              const itse = lomake.querySelector('input[name="rypas_valinta"]:checked').value === 'valitut';
+              lomake.querySelectorAll('input[name="rypas_kisa"]').forEach((cb) => { cb.disabled = !itse; });
+            }
+            lomake.querySelectorAll('input[name="rypas_valinta"]').forEach((r) => r.addEventListener('change', paivita));
+            // Selain voi palauttaa radiovalinnan "Takaisin"-napilla (esim. virheilmoituksen jälkeen).
+            window.addEventListener('pageshow', paivita);
+            paivita();
+          })();
+        </script>`
+        }
+      </fieldset>`
+      : '';
   // Turnstile aktiivinen vain kun site key on annettu eikä lomake ole muutenkin poissa
   // käytöstä (esikatselu) - submit-nappi pidetään pois päältä kunnes widget kutsuu
   // data-callbackin, jotta ilmoittautuminen ei onnistu ennen bottitarkistuksen läpäisyä.
@@ -250,6 +300,7 @@ function ilmoittautumislomakeHtml(
       <p class="pieni">Täytä jokaisen luokan alle sen osallistujat - yksi hevonen/ratsastaja per rivi, muodossa
         "${escHtml(muotoTeksti)}". Voit ilmoittautua useampaan luokkaan samalla kertaa: lomake lähettää kaikki
         täytetyt luokat yhdellä lähetyksellä, tyhjäksi jätetyt luokat ohitetaan.</p>
+      ${rypasHtml}
       ${luokkaKenttaHtml}
       ${turnstileHtml}
       <button type="submit" id="${nappiId}"${disabledAttr}${turnstileKaytossa ? ' disabled' : ''}>Ilmoittaudu</button>

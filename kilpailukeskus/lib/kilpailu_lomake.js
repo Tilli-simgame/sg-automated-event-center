@@ -81,6 +81,82 @@ function isoPaivienPaasta(paivia) {
   return d.toISOString().slice(0, 10);
 }
 
+// ISO-päivämääräaritmetiikka UTC:nä, ettei kesäaikasiirtymä siirrä päivää.
+function lisaaPaivia(iso, paivia) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + paivia);
+  return d.toISOString().slice(0, 10);
+}
+
+function paivaero(isoA, isoB) {
+  return Math.round((Date.parse(`${isoA}T00:00:00Z`) - Date.parse(`${isoB}T00:00:00Z`)) / 86400000);
+}
+
+// Kisarypäs (ks. migrations/0022_kisaryppaat.sql): "Uusi kilpailu" -lomake voi luoda kerralla
+// useamman saman lajin kilpailun samoilla luokilla. Lomakkeen kilpailupäivä on ryppään
+// ensimmäinen päivä, ja loput päivät lasketaan valitulla välillä (päivinä) tai annetaan itse.
+const RYPAS_VALIT = [
+  ['1', 'Joka päivä'],
+  ['2', 'Joka toinen päivä'],
+  ['7', 'Kerran viikossa'],
+  ['oma', 'Valitse päivät itse'],
+];
+const RYPAS_MAX_KILPAILUJA = 31;
+
+const RYPAS_VIP_VALINNAT = [
+  ['oma', 'Lasketaan automaattisesti (sama etäisyys kunkin kilpailupäivästä)'],
+  ['sama', 'Sama kuin ryppään ensimmäisellä kilpailulla'],
+];
+
+// Palauttaa ryppään kilpailupäivät [{ kpIso, vipIso }] kilpailupäivän mukaan järjestettynä -
+// yksittäiselle kilpailulle (määrä 1) yksi alkio. Jokaisen kilpailun VIP on joko yhtä monta
+// päivää ennen sen kilpailupäivää kuin lomakkeen VIP on ennen lomakkeen kilpailupäivää, tai
+// (rypas_vip 'sama') lomakkeen VIP sellaisenaan.
+function validoiRypas(arvot) {
+  const virheet = [];
+  const maara = parseInt(arvot.rypas_maara || '1', 10);
+  if (!Number.isFinite(maara) || maara < 1 || maara > RYPAS_MAX_KILPAILUJA) {
+    virheet.push(`Kisaryppään kilpailujen määrän on oltava 1-${RYPAS_MAX_KILPAILUJA}.`);
+    return { virheet, paivat: [] };
+  }
+  const kpIso = suomiPvmIso(arvot.kp);
+  const vipIso = suomiPvmIso(arvot.vip);
+  // Päivämäärien muotovirheet raportoi jo validoiLomake.
+  if (!kpIso || !vipIso) return { virheet, paivat: [] };
+
+  let kpt;
+  if (maara === 1) {
+    kpt = [kpIso];
+  } else if (arvot.rypas_vali === 'oma') {
+    const omat = (arvot.rypas_paivat || []).map((p) => String(p).trim());
+    if (omat.length !== maara) {
+      virheet.push(`Kisaryppään päiviä on annettu ${omat.length}, mutta kilpailuja on ${maara}.`);
+      return { virheet, paivat: [] };
+    }
+    // Ensimmäinen päivä on aina lomakkeen kilpailupäivä.
+    kpt = [kpIso, ...omat.slice(1)];
+    kpt.forEach((p, i) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(p)) virheet.push(`Kisaryppään ${i + 1}. päivä on väärässä muodossa.`);
+      else if (i > 0 && p <= kpIso) virheet.push(`Kisaryppään ${i + 1}. päivän on oltava ensimmäisen kilpailupäivän jälkeen.`);
+    });
+    if (new Set(kpt).size !== kpt.length) virheet.push('Kisaryppään päivät eivät saa toistua.');
+    kpt.sort();
+  } else {
+    const vali = parseInt(arvot.rypas_vali, 10);
+    if (!RYPAS_VALIT.some(([arvo]) => arvo === arvot.rypas_vali) || !Number.isFinite(vali)) {
+      virheet.push('Tuntematon kisaryppään päiväväli.');
+      return { virheet, paivat: [] };
+    }
+    kpt = Array.from({ length: maara }, (_, i) => lisaaPaivia(kpIso, i * vali));
+  }
+
+  // VIP: 'sama' = kaikilla ryppään kilpailuilla sama VIP kuin ensimmäisellä (lomakkeen VIP),
+  // muuten jokaiselle sama etäisyys omasta kilpailupäivästä.
+  const vipEro = paivaero(kpIso, vipIso);
+  const vipKilpailulle = (k) => (arvot.rypas_vip === 'sama' ? vipIso : lisaaPaivia(k, -vipEro));
+  return { virheet, paivat: kpt.map((k) => ({ kpIso: k, vipIso: vipKilpailulle(k) })) };
+}
+
 // Osallistujamäärän yläraja ei voi vaihdella luokittain saman kilpailun sisällä (ks.
 // arvot.max_osallistujia_per_luokka / validoiLomake) - luokkarivi kantaa siis enää pelkän
 // nimen, mahdollinen vanha "Nimi | max" -syntaksi jätetään huomiotta yhteensopivuuden vuoksi.
@@ -210,6 +286,9 @@ function lomakeHtml(
     // (ks. kokoaJaokset yllä).
     lajit = [],
     lajiLuokkavaihtoehdot = {},
+    // Kisarypäs-osio (ks. validoiRypas) näytetään vain uuden kilpailun lomakkeella - olemassa
+    // olevaa kilpailua ei voi muuttaa ryppääksi jälkikäteen.
+    naytaRypas = false,
   } = {}
 ) {
   const kaikkiJaokset = kokoaJaokset(lajit);
@@ -281,6 +360,129 @@ function lomakeHtml(
       <a href="/kilpailut/kilpailupaikat/uusi">lisää ensimmäinen profiiliin</a>, niin sen tiedot
       esitäytetään tästä lomakkeesta eteenpäin automaattisesti.</p>`;
 
+  // Päivälista piirretään selaimessa (ks. skripti alla) - "Valitse päivät itse" -tilassa
+  // jokainen päivä on oma muokattava kenttä (rypas_kp), muuten lista on pelkkä esikatselu ja
+  // palvelin laskee päivät välistä (ks. validoiRypas).
+  // Rypäs on oletuksena pois päältä (yksittäinen kilpailu). Pois päältä ollessa asetukset ovat
+  // sisäkkäisessä disabled-fieldsetissä, jolloin selain ei validoi eikä lähetä niitä - palvelin
+  // tulkitsee silloin määräksi 1 (ks. functions/kilpailut/uusi.js).
+  const rypasPaalla = Boolean(arvot.rypas_paalla);
+  const rypasHtml = naytaRypas
+    ? `
+      <fieldset>
+        <legend>Kisarypäs</legend>
+        <label style="font-weight:normal;display:flex;gap:0.5rem;align-items:center;margin-top:0">
+          <input type="checkbox" name="rypas_paalla" value="1" id="rypas-paalla-input"${rypasPaalla ? ' checked' : ''} style="width:auto;margin:0">
+          Luo kisarypäs (useampi kilpailu kerralla)
+        </label>
+        <fieldset id="rypas-asetukset" style="border:none;margin:0;padding:0"${rypasPaalla ? '' : ' disabled hidden'}>
+        <p class="pieni">Luo kerralla useampi kilpailu samoilla tiedoilla ja luokilla. Yllä oleva kilpailupäivä on
+        ryppään ensimmäinen päivä ja yllä oleva VIP sen VIP. Kilpailijat voivat ilmoittautua yhdellä lomakkeella
+        kaikkiin ryppään kilpailuihin.</p>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap">
+          <label style="flex:1;min-width:180px">Kilpailujen määrä
+            <input type="number" name="rypas_maara" id="rypas-maara-input" min="2" max="${RYPAS_MAX_KILPAILUJA}"
+                   required value="${escHtml(arvot.rypas_maara && arvot.rypas_maara !== '1' ? arvot.rypas_maara : '2')}">
+          </label>
+          <label style="flex:1;min-width:180px">Kilpailupäivät
+            <select name="rypas_vali" id="rypas-vali-select">
+              ${RYPAS_VALIT.map(
+                ([arvo, nimi]) => `<option value="${arvo}"${(arvot.rypas_vali || '1') === arvo ? ' selected' : ''}>${nimi}</option>`
+              ).join('')}
+            </select>
+          </label>
+        </div>
+        <label>Muiden kilpailujen VIP
+          <select name="rypas_vip" id="rypas-vip-select">
+            ${RYPAS_VIP_VALINNAT.map(
+              ([arvo, nimi]) => `<option value="${arvo}"${(arvot.rypas_vip || 'oma') === arvo ? ' selected' : ''}>${nimi}</option>`
+            ).join('')}
+          </select>
+        </label>
+        <div id="rypas-paivat"></div>
+        </fieldset>
+      </fieldset>
+      <script>
+        (function () {
+          const ALKUARVOT = ${JSON.stringify(arvot.rypas_paivat || []).replace(/</g, '\\u003c')};
+          const maaraInput = document.getElementById('rypas-maara-input');
+          const valiSelect = document.getElementById('rypas-vali-select');
+          const vipSelect = document.getElementById('rypas-vip-select');
+          const kpInput = document.getElementById('kp-input');
+          const vipInput = document.querySelector('input[name="vip"]');
+          const alue = document.getElementById('rypas-paivat');
+          let edellinenVali = 1;
+
+          function lisaaPaivia(iso, paivia) {
+            const d = new Date(iso + 'T00:00:00Z');
+            d.setUTCDate(d.getUTCDate() + paivia);
+            return d.toISOString().slice(0, 10);
+          }
+          function suomeksi(iso) {
+            const m = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(iso || '');
+            return m ? m[3] + '.' + m[2] + '.' + m[1] : iso;
+          }
+
+          function piirra() {
+            const maara = Math.min(Math.max(parseInt(maaraInput.value, 10) || 1, 1), ${RYPAS_MAX_KILPAILUJA});
+            const kp = kpInput.value;
+            if (maara === 1 || !kp) { alue.innerHTML = ''; return; }
+            const oma = valiSelect.value === 'oma';
+            // "Itse"-tilaan vaihdettaessa aloitetaan edellisen välin mukaisista päivistä.
+            if (!oma) edellinenVali = parseInt(valiSelect.value, 10);
+            const vali = edellinenVali;
+            // Itse valitut päivät säilyvät kun määrää muutetaan (tai lomake palaa virheen kanssa).
+            const vanhat = Array.from(alue.querySelectorAll('input[name="rypas_kp"]')).map((i) => i.value);
+            const lahde = vanhat.length ? vanhat : ALKUARVOT;
+            const vipEro = vipInput.value
+              ? Math.round((Date.parse(kp + 'T00:00:00Z') - Date.parse(vipInput.value + 'T00:00:00Z')) / 86400000)
+              : null;
+            const samaVip = vipSelect.value === 'sama';
+            const vipTeksti = (arvo) =>
+              vipEro != null && arvo ? '(VIP ' + suomeksi(samaVip ? vipInput.value : lisaaPaivia(arvo, -vipEro)) + ')' : '';
+            let html = '<p class="pieni">Luotavat kilpailut:</p><ol>';
+            for (let i = 0; i < maara; i++) {
+              const arvo = i === 0 ? kp : oma && lahde[i] ? lahde[i] : lisaaPaivia(kp, i * vali);
+              html += oma
+                ? '<li><input type="date" name="rypas_kp" value="' + arvo + '"' + (i === 0 ? ' readonly' : ' required') +
+                  ' style="width:auto;margin-top:0.2rem"> <span class="pieni rypas-vip">' + vipTeksti(arvo) + '</span></li>'
+                : '<li>' + suomeksi(arvo) + ' <span class="pieni">' + vipTeksti(arvo) + '</span></li>';
+            }
+            html += '</ol>';
+            if (oma) {
+              html += '<p class="pieni">Ensimmäinen päivä on yllä valittu kilpailupäivä.</p>';
+            }
+            alue.innerHTML = html;
+            // Itse valittua päivää muutettaessa päivitetään vain sen rivin VIP (koko listan
+            // uudelleenpiirto veisi fokuksen kesken päivämäärän syötön).
+            alue.querySelectorAll('input[name="rypas_kp"]').forEach((input) => {
+              input.addEventListener('input', () => {
+                input.parentElement.querySelector('.rypas-vip').textContent = vipTeksti(input.value);
+              });
+            });
+          }
+
+          const paallaInput = document.getElementById('rypas-paalla-input');
+          const asetukset = document.getElementById('rypas-asetukset');
+          function paivitaPaalla() {
+            asetukset.disabled = !paallaInput.checked;
+            asetukset.hidden = !paallaInput.checked;
+          }
+          paallaInput.addEventListener('change', paivitaPaalla);
+          // Selain voi palauttaa valintaruudun tilan "Takaisin"-napilla.
+          window.addEventListener('pageshow', paivitaPaalla);
+          paivitaPaalla();
+
+          maaraInput.addEventListener('input', piirra);
+          valiSelect.addEventListener('change', piirra);
+          vipSelect.addEventListener('change', piirra);
+          kpInput.addEventListener('change', piirra);
+          vipInput.addEventListener('change', piirra);
+          piirra();
+        })();
+      </script>`
+    : '';
+
   return `
     ${naytaOtsikko ? `<h1>${escHtml(otsikko)}</h1>` : ''}
     ${virheHtml}
@@ -306,6 +508,7 @@ function lomakeHtml(
       ja kilpailupäivän vähintään 1 vrk VIP:n jälkeen (oletusarvot: VIP +14 vrk, kilpailupäivä +15 vrk).
       Kilpailukutsu (osoite VRL:n kisakalenteriin) generoidaan ja julkaistaan automaattisesti
       tallennuksen yhteydessä - ei siis erillistä kutsu-URL-kenttää.</p>
+      ${rypasHtml}
       <label>Arvontatapa
         <select name="arvontatapa" required>
           <option value="1" ${arvot.arvontatapa === '1' ? 'selected' : ''}>Lyhyt/pitkä arvonta</option>
@@ -612,6 +815,7 @@ export {
   luokatArvoksi,
   kilpailunLomakeArvot,
   validoiLomake,
+  validoiRypas,
   lomakeHtml,
   kokoaJaokset,
   PAIVAMAARA_REGEX,

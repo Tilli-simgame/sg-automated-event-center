@@ -5,15 +5,18 @@ import {
   listLuokat,
   listOsallistujat,
   listTulokset,
+  getLaji,
   merkitseOmatHevosetLisatty,
   listLajit,
   listLajiLuokkavaihtoehdotKartta,
+  listRyppaanKilpailut,
 } from '../../../lib/db.js';
 import { escHtml, sivu, vastaus, tilaBadge } from '../../../lib/html.js';
 import { kilpailunLomakeArvot, lomakeHtml, AVOINNA_HUOMIO } from '../../../lib/kilpailu_lomake.js';
 import { onkoVirallinenJaos } from '../../../lib/jaokset.js';
 import { yritaHakeaVrlKisaId } from '../../../lib/vrl_kisa_id_haku.js';
 import { lisaaOmatHevosetAutomaattisesti, valmisOmilleHevosille } from '../../../lib/omat_hevoset.js';
+import { pisteetSijalle } from '../../../lib/saannot.js';
 
 // Osallistujien käsinhallinta (muokkaa/poista/lisää) sallitaan vain ennen arvontaa - sen
 // jälkeen tulokset (ks. lib/db.js:n tulokset-taulu) viittaavat osallistuja-riveihin, eikä
@@ -82,7 +85,7 @@ function lisaaLuokkaLomakeHtml(kilpailuId) {
     </form>`;
 }
 
-async function luokkaHtml(env, luokka, kilpailu) {
+async function luokkaHtml(env, luokka, kilpailu, villiLaji) {
   const osallistujat = await listOsallistujat(env.DB, luokka.id);
   const maara = osallistujat.length;
   const muokattavissa = MUOKATTAVAT_TILAT.has(kilpailu.tila);
@@ -90,8 +93,16 @@ async function luokkaHtml(env, luokka, kilpailu) {
   let sisalto = '';
   if (kilpailu.tila === 'arvottu' || kilpailu.tila === 'tulokset_lahetetty' || kilpailu.tila === 'tulokset_virhe') {
     const tulokset = await listTulokset(env.DB, luokka.id);
+    // Villin lajin pistejako (ks. lib/saannot.js:n pisteetSijalle).
+    const pisteHtml = (laji, sija) => {
+      const p = pisteetSijalle(laji, sija);
+      return p != null ? ` <span class="pieni">(${p} p.)</span>` : '';
+    };
+    const sijoitetut = tulokset.filter((t) => t.sija != null);
+    const hylatyt = tulokset.filter((t) => t.sija == null);
     sisalto = tulokset.length
-      ? `<ol class="tulokset">${tulokset.map((t) => `<li>${escHtml(t.nimi)}</li>`).join('')}</ol>`
+      ? `<ol class="tulokset">${sijoitetut.map((t) => `<li>${escHtml(t.nimi)}${pisteHtml(villiLaji, t.sija)}</li>`).join('')}</ol>
+         ${hylatyt.length ? `<p class="pieni" style="margin-bottom:0">Hylätyt:</p><ul class="tulokset">${hylatyt.map((t) => `<li>${escHtml(t.nimi)}</li>`).join('')}</ul>` : ''}`
       : '<p class="pieni">Ei osallistujia.</p>';
   } else if (muokattavissa) {
     sisalto = `
@@ -116,6 +127,7 @@ export async function onRequestGet({ params, env }) {
   }
   kilpailu = await yritaHakeaVrlKisaId(env, kilpailu);
   const villi = !onkoVirallinenJaos(kilpailu.jaos);
+  const villiLaji = villi ? await getLaji(env.DB, kilpailu.jaos) : null;
 
   const luokat = await listLuokat(env.DB, kilpailu.id);
 
@@ -132,7 +144,7 @@ export async function onRequestGet({ params, env }) {
     };
   }
 
-  const luokkaKortit = await Promise.all(luokat.map((l) => luokkaHtml(env, l, kilpailu)));
+  const luokkaKortit = await Promise.all(luokat.map((l) => luokkaHtml(env, l, kilpailu, villiLaji)));
 
   const muokkausLomakeHtml = MUOKATTAVAT_TILAT.has(kilpailu.tila)
     ? await (async () => {
@@ -170,6 +182,35 @@ export async function onRequestGet({ params, env }) {
              <button type="submit">Hyväksy ja lähetä VRL:n kisakalenteriin</button>
            </form>`
       : '';
+  // Kisarypäs (ks. migrations/0022_kisaryppaat.sql): listaus ryppään kilpailuista ja nappi,
+  // jolla kaikki ryppään julkaisemattomat kilpailut hyväksytään kerralla (ks. [id]/laheta-vrl.js).
+  const ryppaanKilpailut = await listRyppaanKilpailut(env.DB, kilpailu.rypas_id);
+  const julkaisemattomat = ryppaanKilpailut.filter((k) => k.tila === 'luonnos' || k.tila === 'vrl_virhe');
+  const rypasHtml =
+    ryppaanKilpailut.length > 1
+      ? `<div class="kortti">
+           <strong>Kisarypäs (${ryppaanKilpailut.length} kilpailua)</strong>
+           <p class="pieni">Kilpailijat voivat ilmoittautua yhdellä lomakkeella kaikkiin ryppään avoimiin kilpailuihin.
+           Kilpailun tietojen ja luokkien muutokset koskevat vain kyseistä kilpailua - ilmoittautuminen yhdistää
+           ryppään kilpailujen luokat nimen perusteella.</p>
+           <ul>${ryppaanKilpailut
+             .map(
+               (k) =>
+                 `<li>${k.id === kilpailu.id ? `<strong>${escHtml(k.nimi)}</strong>` : `<a href="/kilpailut/${k.id}">${escHtml(k.nimi)}</a>`}
+                  ${tilaBadge(k)}</li>`
+             )
+             .join('')}</ul>
+           ${
+             julkaisemattomat.length > 1
+               ? `<form method="post" action="/kilpailut/${kilpailu.id}/laheta-vrl">
+                    <input type="hidden" name="koko_rypas" value="1">
+                    <button type="submit">${villi ? 'Avaa ilmoittautuminen' : 'Hyväksy ja lähetä VRL:n kisakalenteriin'}
+                      kaikkiin ryppään julkaisemattomiin kilpailuihin (${julkaisemattomat.length})</button>
+                  </form>`
+               : ''
+           }
+         </div>`
+      : '';
   const uudelleenyritysNappi =
     kilpailu.tila === 'vrl_virhe'
       ? `<form method="post" action="/kilpailut/${kilpailu.id}/laheta-vrl"><button type="submit">Yritä VRL-lähetystä uudelleen</button></form>`
@@ -177,6 +218,16 @@ export async function onRequestGet({ params, env }) {
   const tuloksetNappi =
     kilpailu.tila === 'tulokset_virhe'
       ? `<form method="post" action="/kilpailut/${kilpailu.id}/laheta-tulokset"><button type="submit">Yritä tulosten lähetystä uudelleen</button></form>`
+      : '';
+  // Oman lajin kilpailun voi arpoa uudelleen lajin nykyisillä asetuksilla (täytehevoset,
+  // hylätyt) - sama tilajoukko tarkistetaan palvelinpuolella [id]/arvo-uudelleen.js:ssä.
+  const UUDELLEENARVOTTAVAT_TILAT = new Set(['arvottu', 'tulokset_lahetetty', 'tulokset_virhe']);
+  const arvoUudelleenNappi =
+    villi && UUDELLEENARVOTTAVAT_TILAT.has(kilpailu.tila)
+      ? `<form method="post" action="/kilpailut/${kilpailu.id}/arvo-uudelleen"
+             onsubmit="return confirm('Arvotaanko kilpailun ${escHtml(kilpailu.nimi).replace(/'/g, "\\'")} tulokset uudelleen lajin nykyisillä asetuksilla? Nykyiset tulokset ja täytehevoset korvataan.')">
+           <button type="submit" class="toissijainen">Arvo tulokset uudelleen</button>
+         </form>`
       : '';
   // VRL-kisa-id ei koskaan tarvita/tule villille lajille (ks. lib/vrl_kisa_id_haku.js ja
   // lib/kilpailun_tulosten_lahetys.js) - lomake piilotetaan siis kokonaan sille.
@@ -281,10 +332,12 @@ export async function onRequestGet({ params, env }) {
       enintään ${escHtml(kilpailu.max_osallistujia_per_luokka)} osallistujaa/luokka
     </p>
     ${kilpailu.kutsu_url ? `<p class="pieni">Kilpailukutsu${kilpailu.tila === 'luonnos' ? ' (esikatselu)' : ''}: <a href="${escHtml(kilpailu.kutsu_url)}">${escHtml(kilpailu.kutsu_url)}</a></p>` : ''}
+    ${rypasHtml}
     ${muokkausLomakeHtml}
     ${hyvaksyNappi}
     ${uudelleenyritysNappi}
     ${tuloksetNappi}
+    ${arvoUudelleenNappi}
     ${kisaIdLomake}
     ${villiTilaLomake}
     ${omatHevosetVirheetHtml}

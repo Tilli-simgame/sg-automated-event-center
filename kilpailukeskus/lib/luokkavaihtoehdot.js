@@ -3,9 +3,7 @@
 /**
  * Jaoskohtaiset valmiit kilpailuluokkavaihtoehdot "Uusi kilpailu" -lomakkeen
  * luokkavalitsinta varten. Lähde: ../../disciplines_classes.md. Avaimet vastaavat
- * ./jaokset.js:n jaos-id:itä - Työhevosyhdistys (TYH) on jätetty pois samasta syystä kuin
- * Näyttelyjaos jaokset.js:ssä: se ei ole valittavissa "Ilmoita perinteiset kilpailut"
- * -lomakkeella.
+ * ./jaokset.js:n jaos-id:itä.
  *
  * Huom: osa ERJ:n luokkanimistä (esim. "40cm", "50cm") on itsessään VRL:n
  * tulostenlähetyslomakkeen vaatimaa yli 5 merkkiä lyhyempiä (ks. ../../lib/tulokset_client.js:n
@@ -73,6 +71,9 @@ const JAOS_LUOKAT = {
     'Park', 'Park harness', 'Formal combination', 'Showmanship', 'Equitation',
     'Pleasure driving (avoinna kaikille roduille)', 'Fine harness', 'Roadster',
   ],
+
+  // TYH - Työhevosyhdistys
+  '8': ['Tottelevaisuus', 'Käyttöajo', 'Metsäajo', 'Kyntö', 'Veto', 'Juoksukoe', 'Käyntikoe'],
 };
 
 export { JAOS_LUOKAT };

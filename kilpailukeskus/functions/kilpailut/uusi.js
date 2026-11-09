@@ -11,8 +11,8 @@
  * hyväksymistä (ks. [id]/muokkaa.js) - esim. jos VRL-lähetys epäonnistuu väärän tiedon takia.
  */
 
-import { createKilpailu, createLuokka, seuraavaKutsuNumero, listKilpailupaikat, listLajit, listLajiLuokkavaihtoehdotKartta } from '../../lib/db.js';
-import { kokoaJaokset, isoPvmSuomeksi, validoiLomake, lomakeHtml } from '../../lib/kilpailu_lomake.js';
+import { createKilpailu, createKisarypas, createLuokka, seuraavaKutsuNumero, listKilpailupaikat, listLajit, listLajiLuokkavaihtoehdotKartta } from '../../lib/db.js';
+import { kokoaJaokset, isoPvmSuomeksi, validoiLomake, validoiRypas, lomakeHtml } from '../../lib/kilpailu_lomake.js';
 import { sivu, vastaus, uudelleenohjaus } from '../../lib/html.js';
 
 export async function onRequestGet({ env }) {
@@ -35,7 +35,7 @@ export async function onRequestGet({ env }) {
   return vastaus(
     sivu({
       otsikko: 'Uusi kilpailu',
-      sisalto: lomakeHtml(arvot, [], { kilpailupaikat, lajit, lajiLuokkavaihtoehdot }),
+      sisalto: lomakeHtml(arvot, [], { kilpailupaikat, lajit, lajiLuokkavaihtoehdot, naytaRypas: true }),
     })
   );
 }
@@ -65,13 +65,24 @@ export async function onRequestPost({ request, env }) {
     luokat: (data.get('luokat') || '').toString(),
     max_lahtoja_per_hevonen: (data.get('max_lahtoja_per_hevonen') || '').toString().trim(),
     max_osallistujia_per_luokka: (data.get('max_osallistujia_per_luokka') || '').toString().trim(),
+    // Kisarypäs pois päältä = yksittäinen kilpailu (ks. lib/kilpailu_lomake.js:n rypasHtml).
+    rypas_paalla: data.get('rypas_paalla') === '1',
+    rypas_maara: data.get('rypas_paalla') === '1' ? (data.get('rypas_maara') || '1').toString().trim() : '1',
+    rypas_vali: (data.get('rypas_vali') || '1').toString(),
+    rypas_vip: (data.get('rypas_vip') || 'oma').toString(),
+    rypas_paivat: data.getAll('rypas_kp').map((p) => p.toString()),
   };
 
-  const { virheet, luokat, maxLahtoja, maxOsallistujia, vipIso } = validoiLomake(arvot, { lajit });
+  const { virheet, luokat, maxLahtoja, maxOsallistujia } = validoiLomake(arvot, { lajit });
+  const { virheet: rypasVirheet, paivat } = validoiRypas(arvot);
+  virheet.push(...rypasVirheet);
 
   if (virheet.length > 0) {
     return vastaus(
-      sivu({ otsikko: 'Uusi kilpailu', sisalto: lomakeHtml(arvot, virheet, { kilpailupaikat, lajit, lajiLuokkavaihtoehdot }) }),
+      sivu({
+        otsikko: 'Uusi kilpailu',
+        sisalto: lomakeHtml(arvot, virheet, { kilpailupaikat, lajit, lajiLuokkavaihtoehdot, naytaRypas: true }),
+      }),
       400
     );
   }
@@ -83,41 +94,62 @@ export async function onRequestPost({ request, env }) {
   // jaosTieto haetaan VRL:n jaoksien ja järjestäjän omien lajien yhdistetystä listasta
   // (ks. kokoaJaokset), koska jaos voi olla kumpi tahansa.
   const jaosTieto = kokoaJaokset(lajit).find((j) => j.id === arvot.jaos);
-  const vuosi = kpIsoRaw.slice(0, 4);
-  const kuukausi = kpIsoRaw.slice(5, 7);
-  const kutsuNumero = await seuraavaKutsuNumero(env.DB, arvot.jaos, vuosi, kuukausi);
-  const numeroStr = String(kutsuNumero).padStart(4, '0');
-  const kutsuPolku = `/${jaosTieto.lyhenne.toLowerCase()}/${vuosi}/${kuukausi}/${numeroStr}`;
-  const kutsuUrl = new URL(kutsuPolku, request.url).toString();
 
-  const kilpailuId = await createKilpailu(env.DB, {
-    nimi: arvot.nimi,
-    jaos: arvot.jaos,
-    kp: arvot.kp,
-    kpIso: kpIsoRaw,
-    vip: arvot.vip,
-    vipIso,
-    arvontatapa: arvot.arvontatapa,
-    jarjTalli: arvot.jarj_talli,
-    jarjTalliNimi: arvot.jarj_talli_nimi,
-    jarjTalliUrl: arvot.jarj_talli_url,
-    kutsuUrl,
-    kutsuNumero,
-    info: arvot.info,
-    lisatietoja: arvot.lisatietoja,
-    takaaja: arvot.takaaja,
-    vastuuhenkiloNimi: arvot.vastuuhenkilo_nimi,
-    vastuuhenkiloEmail: arvot.vastuuhenkilo_email,
-    maxLahtojaPerHevonen: maxLahtoja,
-    maxOsallistujiaPerLuokka: maxOsallistujia,
-  });
+  // Kisarypäs (ks. migrations/0022_kisaryppaat.sql): jokainen ryppään päivä on oma
+  // tavallinen kilpailunsa (oma kutsu, VRL-lähetys ja arvonta), vain yhteinen rypas_id
+  // yhdistää ne ilmoittautumista varten. Yksittäinen kilpailu ei kuulu ryppääseen.
+  const rypasId = paivat.length > 1 ? await createKisarypas(env.DB) : null;
+  let ensimmainenId = null;
+  // Kutsunumerot lasketaan järjestyksessä, koska seuraavaKutsuNumero näkee vain jo tallennetut.
+  for (const { kpIso, vipIso } of paivat) {
+    const kp = isoPvmSuomeksi(kpIso);
+    // Ryppäässä lomakkeen nimessä oleva ensimmäinen kilpailupäivä (oletusnimi "ERJ - 1.2.2026")
+    // vaihdetaan kunkin kilpailun omaksi päiväksi; muuten päivä lisätään nimen perään.
+    const nimi =
+      paivat.length === 1 || kp === arvot.kp
+        ? arvot.nimi
+        : arvot.nimi.includes(arvot.kp)
+          ? arvot.nimi.split(arvot.kp).join(kp)
+          : `${arvot.nimi} - ${kp}`;
 
-  await Promise.all(
-    luokat.map((l, i) => createLuokka(env.DB, kilpailuId, l.nimi, maxOsallistujia, i))
-  );
+    const vuosi = kpIso.slice(0, 4);
+    const kuukausi = kpIso.slice(5, 7);
+    const kutsuNumero = await seuraavaKutsuNumero(env.DB, arvot.jaos, vuosi, kuukausi);
+    const numeroStr = String(kutsuNumero).padStart(4, '0');
+    const kutsuPolku = `/${jaosTieto.lyhenne.toLowerCase()}/${vuosi}/${kuukausi}/${numeroStr}`;
+    const kutsuUrl = new URL(kutsuPolku, request.url).toString();
+
+    const kilpailuId = await createKilpailu(env.DB, {
+      nimi,
+      jaos: arvot.jaos,
+      kp,
+      kpIso,
+      vip: isoPvmSuomeksi(vipIso),
+      vipIso,
+      arvontatapa: arvot.arvontatapa,
+      jarjTalli: arvot.jarj_talli,
+      jarjTalliNimi: arvot.jarj_talli_nimi,
+      jarjTalliUrl: arvot.jarj_talli_url,
+      kutsuUrl,
+      kutsuNumero,
+      info: arvot.info,
+      lisatietoja: arvot.lisatietoja,
+      takaaja: arvot.takaaja,
+      vastuuhenkiloNimi: arvot.vastuuhenkilo_nimi,
+      vastuuhenkiloEmail: arvot.vastuuhenkilo_email,
+      maxLahtojaPerHevonen: maxLahtoja,
+      maxOsallistujiaPerLuokka: maxOsallistujia,
+      rypasId,
+    });
+    ensimmainenId ??= kilpailuId;
+
+    await Promise.all(
+      luokat.map((l, i) => createLuokka(env.DB, kilpailuId, l.nimi, maxOsallistujia, i))
+    );
+  }
 
   // Kilpailu jää tilaan 'luonnos': kutsu on jo luotu ja nähtävissä esikatseluna
   // (kutsu_url), mutta VRL-lähetys tehdään vasta kun järjestäjä on tarkistanut
   // kutsun ja hyväksynyt sen kilpailun sivulta (ks. [id]/laheta-vrl.js).
-  return uudelleenohjaus(`/kilpailut/${kilpailuId}`);
+  return uudelleenohjaus(`/kilpailut/${ensimmainenId}`);
 }

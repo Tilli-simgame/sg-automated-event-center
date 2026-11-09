@@ -37,7 +37,12 @@ async function laheteTuloksetVrl(env, kilpailuId) {
   const luokatData = [];
   for (const luokka of luokat) {
     // Luokka lähetetään myös ilman osallistujia (tyhjänä), jotta se näkyy VRL:n tuloksissa.
-    const tulokset = await listTulokset(env.DB, luokka.id);
+    // VRL laskee osallistujat riveittäin, joten nimen sisäiset rivinvaihdot (esim. ulkoisesta
+    // hevosrajapinnasta tulleet, ks. lib/omat_hevoset.js) litistetään välilyönneiksi.
+    const tulokset = (await listTulokset(env.DB, luokka.id)).map((t) => ({
+      ...t,
+      nimi: (t.nimi || '').replace(/\s+/g, ' ').trim(),
+    }));
     const osallistujat = tulokset
       .filter((t) => t.sija != null)
       .map((t) => `${t.sija}. ${t.nimi}`)

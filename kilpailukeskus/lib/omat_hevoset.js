@@ -25,7 +25,7 @@
  * eivät ylitä rajaa vain koska lisäys on automaattinen.
  */
 
-import { listOsallistujat, lisaaOsallistuja, getLaji } from './db.js';
+import { listOsallistujat, lisaaOsallistuja, getLaji, listLomalista } from './db.js';
 import { hevostaRatsastajaaKohtiLuokassa } from './saannot.js';
 import { onkoVirallinenJaos } from './jaokset.js';
 
@@ -35,9 +35,9 @@ import { onkoVirallinenJaos } from './jaokset.js';
 const OMA_TALLI = 'Tilli';
 
 // jaos-id (ks. lib/jaokset.js) -> ulkoisen rajapinnan discipline-parametri. Vain jaokset
-// joita kilpailukeskus tukee (JAOKSET-listan 1-6) on kartoitettu - loput (matkaratsastus,
-// ravit, työhevosajo, laukat, poniravit, maastoeste, näyttelyt) eivät koskaan esiinny
-// kilpailun jaos-kentässä. Huom: ../disciplines_ids.md nimeää jaoksen 5 "lännenratsastus",
+// joita kilpailukeskus tukee (JAOKSET-lista) on kartoitettu - loput (matkaratsastus,
+// ravit, laukat, poniravit, maastoeste, näyttelyt) eivät koskaan esiinny kilpailun
+// jaos-kentässä. Huom: ../disciplines_ids.md nimeää jaoksen 5 "lännenratsastus",
 // mutta rajapinta itse käyttää nimeä "westernratsastus" (todennettu suoraan rajapinnasta -
 // "lännenratsastus" palauttaa aina 0 hevosta vaikka dataa on olemassa).
 const JAOS_LAJIT = {
@@ -47,6 +47,7 @@ const JAOS_LAJIT = {
   4: 'valjakkoajo',
   5: 'westernratsastus',
   6: 'askellajiratsastus',
+  8: 'työhevosajo', // TYH - todennettu rajapinnasta
 };
 
 // Onko kilpailu siinä vaiheessa että omat hevoset lisätään (ks. tiedoston alun kommentti) -
@@ -168,11 +169,17 @@ async function lisaaOmatHevosetAutomaattisesti(env, kilpailu, luokat) {
   }
   hevoset = sekoita(hevoset);
 
+  // Lomalla olevat hevoset (ks. migrations/0023_lomalista.sql, /kilpailut/lomalista) ohitetaan
+  // hiljaa - ne eivät ole virheitä, vaan järjestäjän oma valinta.
+  const lomalla = new Set((await listLomalista(env.DB)).map((r) => normalisoi(r.vh_tunnus)));
+
   const luokkaSanat = luokat.map((luokka) => ({ luokka, s: sanat(luokka.nimi) }));
   let lisatty = 0;
 
   for (const hevonen of hevoset) {
-    const nimi = hevonen.name || '(nimetön)';
+    // Rajapinnan nimissä voi olla rivinvaihtoja (esim. "TuuHa's \n\nMercadona") - VRL:n
+    // tulosteksti on rivi per osallistuja, joten nimi on pidettävä yhdellä rivillä.
+    const nimi = (hevonen.name || '').replace(/\s+/g, ' ').trim() || '(nimetön)';
     const vhTunnus = (hevonen.registration_number || '').toString().toUpperCase();
     const lajitaso = hevonen.discipline_level;
 
@@ -180,6 +187,7 @@ async function lisaaOmatHevosetAutomaattisesti(env, kilpailu, luokat) {
       virheet.push(`${nimi}: VH-tunnus puuttuu, ei voitu lisätä.`);
       continue;
     }
+    if (lomalla.has(normalisoi(vhTunnus))) continue;
     if (!lajitaso) {
       virheet.push(`${nimi} (${vhTunnus}): lajitasoa ei ole asetettu, ei voitu päätellä luokkaa.`);
       continue;
