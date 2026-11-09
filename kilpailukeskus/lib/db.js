@@ -655,6 +655,29 @@ async function tallennaArvonta(db, kilpailuId, arvotut) {
   ]);
 }
 
+// Lomalista (ks. migrations/0023_lomalista.sql): lomalla olevat omat hevoset, joita omien
+// hevosten automaattilisäys ei lisää kilpailuihin.
+async function listLomalista(db) {
+  const { results } = await db.prepare('SELECT * FROM lomalista ORDER BY vh_tunnus').all();
+  return results;
+}
+
+// Korvaa koko lomalistan yhtenä batchina. Säilyttää jo listalla olleiden hevosten lisatty_at:n.
+// rivit: [{ vhTunnus, kommentti }], vhTunnus isoin kirjaimin, ei toistoja.
+async function tallennaLomalista(db, rivit) {
+  const tunnukset = rivit.map((r) => r.vhTunnus);
+  const lisays = db.prepare(
+    `INSERT INTO lomalista (vh_tunnus, kommentti) VALUES (?, ?)
+     ON CONFLICT (vh_tunnus) DO UPDATE SET kommentti = excluded.kommentti`
+  );
+  await db.batch([
+    db
+      .prepare('DELETE FROM lomalista WHERE vh_tunnus NOT IN (SELECT value FROM json_each(?))')
+      .bind(JSON.stringify(tunnukset)),
+    ...rivit.map((r) => lisays.bind(r.vhTunnus, r.kommentti)),
+  ]);
+}
+
 async function merkitseArvottu(db, kilpailuId) {
   await db
     .prepare("UPDATE kilpailut SET tila = 'arvottu', arvottu_at = datetime('now') WHERE id = ?")
@@ -692,6 +715,8 @@ export {
   lisaaTaytehevoset,
   listKilpailunOsallistujat,
   tallennaArvonta,
+  listLomalista,
+  tallennaLomalista,
   poistaKilpailunTuloksetJaTaytehevoset,
   listKilpailut,
   getKilpailu,

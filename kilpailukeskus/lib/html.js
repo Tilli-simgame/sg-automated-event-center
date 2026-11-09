@@ -93,6 +93,7 @@ function sivu({ otsikko, sisalto, viesti, turnstileSiteKey, kirjautunut = true }
   <a href="/kilpailut/uusi">+ Uusi kilpailu</a>
   <a href="/kilpailut/kilpailupaikat">Kilpailupaikat</a>
   <a href="/lajit">Omat lajit</a>
+  <a href="/kilpailut/lomalista">Lomalista</a>
   <a href="/rmp">RMP-hevoset</a>
   <form method="post" action="/kirjaudu-ulos"><button type="submit" class="linkkinappi">Kirjaudu ulos</button></form>`
     : '<a href="/kirjaudu">Kirjaudu sisään</a>';

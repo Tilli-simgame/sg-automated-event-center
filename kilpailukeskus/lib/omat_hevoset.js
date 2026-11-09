@@ -25,7 +25,7 @@
  * eivät ylitä rajaa vain koska lisäys on automaattinen.
  */
 
-import { listOsallistujat, lisaaOsallistuja, getLaji } from './db.js';
+import { listOsallistujat, lisaaOsallistuja, getLaji, listLomalista } from './db.js';
 import { hevostaRatsastajaaKohtiLuokassa } from './saannot.js';
 import { onkoVirallinenJaos } from './jaokset.js';
 
@@ -169,6 +169,10 @@ async function lisaaOmatHevosetAutomaattisesti(env, kilpailu, luokat) {
   }
   hevoset = sekoita(hevoset);
 
+  // Lomalla olevat hevoset (ks. migrations/0023_lomalista.sql, /kilpailut/lomalista) ohitetaan
+  // hiljaa - ne eivät ole virheitä, vaan järjestäjän oma valinta.
+  const lomalla = new Set((await listLomalista(env.DB)).map((r) => normalisoi(r.vh_tunnus)));
+
   const luokkaSanat = luokat.map((luokka) => ({ luokka, s: sanat(luokka.nimi) }));
   let lisatty = 0;
 
@@ -183,6 +187,7 @@ async function lisaaOmatHevosetAutomaattisesti(env, kilpailu, luokat) {
       virheet.push(`${nimi}: VH-tunnus puuttuu, ei voitu lisätä.`);
       continue;
     }
+    if (lomalla.has(normalisoi(vhTunnus))) continue;
     if (!lajitaso) {
       virheet.push(`${nimi} (${vhTunnus}): lajitasoa ei ole asetettu, ei voitu päätellä luokkaa.`);
       continue;
