@@ -45,18 +45,10 @@ function normalisoiUrl(url) {
   }
 }
 
-/**
- * @param {object} asetukset
- * @param {string} asetukset.baseUrl    VRL:n osoite, esim. https://virtuaalihevoset.net
- * @param {string} asetukset.kutsuUrl   Kilpailun kutsu_url
- * @param {Set<string>} [asetukset.varatutIdt] Muiden kilpailujen jo käyttämät kisa-id:t
- * @param {number} [asetukset.timeoutMs]
- * @returns {Promise<{kisaId: string} | null>}
- */
-async function haeVrlKisaId({ baseUrl, kutsuUrl, varatutIdt, timeoutMs }) {
-  const haettava = normalisoiUrl(kutsuUrl);
-  if (!haettava) return null;
-
+// Hakee VRL:n kisakalenterin rivit - null jos sivu ei vastannut tai dataa ei löytynyt.
+// Erotettu täsmäyksestä (etsiKisaId), jotta kisaryppään kaikille kilpailuille riittää yksi
+// kalenterihaku (ks. lib/vrl_kisa_id_haku.js:n luoKalenteri).
+async function haeKalenterinRivit({ baseUrl, timeoutMs }) {
   const osoite = `${(baseUrl || '').replace(/\/+$/, '')}/kilpailutoiminta/kilpailukalenteri/perinteiset`;
 
   const ohjaus = new AbortController();
@@ -70,8 +62,18 @@ async function haeVrlKisaId({ baseUrl, kutsuUrl, varatutIdt, timeoutMs }) {
   if (!vastaus.ok) return null;
 
   const rivit = poimiRivit(await vastaus.text());
-  if (!rivit || !rivit.length) return null;
+  return rivit && rivit.length ? rivit : null;
+}
 
+/**
+ * @param {Array|null} rivit             haeKalenterinRivit-funktion palauttamat rivit
+ * @param {string} kutsuUrl              Kilpailun kutsu_url
+ * @param {Set<string>} [varatutIdt]     Muiden kilpailujen jo käyttämät kisa-id:t
+ * @returns {{kisaId: string} | null}
+ */
+function etsiKisaId(rivit, kutsuUrl, varatutIdt) {
+  const haettava = normalisoiUrl(kutsuUrl);
+  if (!haettava || !rivit) return null;
   const osumat = rivit.filter(
     (r) =>
       r.kisa_id &&
@@ -82,4 +84,4 @@ async function haeVrlKisaId({ baseUrl, kutsuUrl, varatutIdt, timeoutMs }) {
   return { kisaId: String(osumat[0].kisa_id) };
 }
 
-export { haeVrlKisaId };
+export { haeKalenterinRivit, etsiKisaId };
