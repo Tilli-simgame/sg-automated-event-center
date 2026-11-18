@@ -9,7 +9,7 @@
  */
 
 import { getKilpailuByKutsu, listLuokat, listOsallistujat, listTulokset, listLajit, listRyppaanKilpailut } from '../../../../lib/db.js';
-import { yritaHakeaVrlKisaId } from '../../../../lib/vrl_kisa_id_haku.js';
+import { yritaHakeaVrlKisaId, kasitteleRyppaanKilpailut, luoKalenteri } from '../../../../lib/vrl_kisa_id_haku.js';
 import { kokoaJaokset } from '../../../../lib/kilpailu_lomake.js';
 import { SUHTEUTETTU_ARVONTATAPA, kuvausTekstiJaokselle } from '../../../../lib/rmp_arvonta.js';
 import {
@@ -60,7 +60,8 @@ export async function onRequestGet({ request, params, env }) {
   if (!kilpailu) {
     return vastaus(sivu({ otsikko: 'Ei löytynyt', sisalto: '<h1>Kilpailukutsua ei löytynyt.</h1>', kirjautunut }), 404);
   }
-  kilpailu = await yritaHakeaVrlKisaId(env, kilpailu);
+  const kalenteri = luoKalenteri(env);
+  kilpailu = await yritaHakeaVrlKisaId(env, kilpailu, kalenteri);
 
   const luokat = await listLuokat(env.DB, kilpailu.id);
   const luokkaRivit = luokat
@@ -97,8 +98,15 @@ export async function onRequestGet({ request, params, env }) {
   // Tunnuksettomalla lajilla (ks. migrations/0018_laji_ilman_tunnuksia.sql) oletusteksti ei saa
   // pyytää VRL-/VH-tunnuksia, vaikka järjestäjä ei olisi kuvannut omaa osallistumismuotoa.
   // Kisarypäs (ks. migrations/0022_kisaryppaat.sql): lomakkeella voi ilmoittautua kerralla
-  // kaikkiin ryppään avoimiin kilpailuihin. Esikatselussa näytetään koko rypäs.
-  const ryppaanKilpailut = await listRyppaanKilpailut(env.DB, kilpailu.rypas_id);
+  // kaikkiin ryppään avoimiin kilpailuihin. Esikatselussa näytetään koko rypäs. Koska ryppään
+  // muiden kilpailujen kutsusivuja ei välttämättä avata koskaan, niiden vrl_kisa_id:n haku ja
+  // omien hevosten lisäys tehdään tässä (ks. lib/vrl_kisa_id_haku.js:n kasitteleRyppaanKilpailut).
+  const ryppaanKilpailut = await kasitteleRyppaanKilpailut(
+    env,
+    kilpailu,
+    await listRyppaanKilpailut(env.DB, kilpailu.rypas_id),
+    kalenteri
+  );
   const lomakkeenRypas = (
     kilpailu.tila === 'avoinna'
       ? ryppaanKilpailut.filter((k) => k.tila === 'avoinna' && !ilmoittautuminenPaattynyt(k))

@@ -6,7 +6,6 @@ import {
   listOsallistujat,
   listTulokset,
   getLaji,
-  merkitseOmatHevosetLisatty,
   listLajit,
   listLajiLuokkavaihtoehdotKartta,
   listRyppaanKilpailut,
@@ -14,8 +13,13 @@ import {
 import { escHtml, sivu, vastaus, tilaBadge } from '../../../lib/html.js';
 import { kilpailunLomakeArvot, lomakeHtml, AVOINNA_HUOMIO } from '../../../lib/kilpailu_lomake.js';
 import { onkoVirallinenJaos } from '../../../lib/jaokset.js';
-import { yritaHakeaVrlKisaId } from '../../../lib/vrl_kisa_id_haku.js';
-import { lisaaOmatHevosetAutomaattisesti, valmisOmilleHevosille } from '../../../lib/omat_hevoset.js';
+import {
+  yritaHakeaVrlKisaId,
+  kasitteleRyppaanKilpailut,
+  lisaaOmatHevosetJosValmis,
+  luoKalenteri,
+} from '../../../lib/vrl_kisa_id_haku.js';
+import { valmisOmilleHevosille } from '../../../lib/omat_hevoset.js';
 import { pisteetSijalle } from '../../../lib/saannot.js';
 
 // Osallistujien käsinhallinta (muokkaa/poista/lisää) sallitaan vain ennen arvontaa - sen
@@ -125,7 +129,8 @@ export async function onRequestGet({ params, env }) {
   if (!kilpailu) {
     return vastaus(sivu({ otsikko: 'Ei löytynyt', sisalto: '<h1>Kilpailua ei löytynyt.</h1>' }), 404);
   }
-  kilpailu = await yritaHakeaVrlKisaId(env, kilpailu);
+  const kalenteri = luoKalenteri(env);
+  kilpailu = await yritaHakeaVrlKisaId(env, kilpailu, kalenteri);
   const villi = !onkoVirallinenJaos(kilpailu.jaos);
   const villiLaji = villi ? await getLaji(env.DB, kilpailu.jaos) : null;
 
@@ -134,15 +139,7 @@ export async function onRequestGet({ params, env }) {
   // Omien hevosten automaattilisäys (ks. lib/omat_hevoset.js) - vasta kun vrl_kisa_id on
   // löytynyt (omalla lajilla: kun status on "Ilmoittautuminen auki"), ja vain kerran per kilpailu (omat_hevoset_lisatty_at) - järjestäjä voi
   // laukaista haun uudelleen käsin alla olevasta napista tarvittaessa.
-  if (valmisOmilleHevosille(kilpailu) && !kilpailu.omat_hevoset_lisatty_at) {
-    const tulos = await lisaaOmatHevosetAutomaattisesti(env, kilpailu, luokat);
-    await merkitseOmatHevosetLisatty(env.DB, kilpailu.id, tulos.virheet);
-    kilpailu = {
-      ...kilpailu,
-      omat_hevoset_lisatty_at: new Date().toISOString(),
-      omat_hevoset_virheet: tulos.virheet.length ? JSON.stringify(tulos.virheet) : null,
-    };
-  }
+  kilpailu = await lisaaOmatHevosetJosValmis(env, kilpailu, luokat);
 
   const luokkaKortit = await Promise.all(luokat.map((l) => luokkaHtml(env, l, kilpailu, villiLaji)));
 
@@ -184,7 +181,14 @@ export async function onRequestGet({ params, env }) {
       : '';
   // Kisarypäs (ks. migrations/0022_kisaryppaat.sql): listaus ryppään kilpailuista ja nappi,
   // jolla kaikki ryppään julkaisemattomat kilpailut hyväksytään kerralla (ks. [id]/laheta-vrl.js).
-  const ryppaanKilpailut = await listRyppaanKilpailut(env.DB, kilpailu.rypas_id);
+  // Samalla haetaan ryppään muille kilpailuille vrl_kisa_id ja lisätään omat hevoset (ks.
+  // lib/vrl_kisa_id_haku.js:n kasitteleRyppaanKilpailut) - muuten ne jäisivät tekemättä.
+  const ryppaanKilpailut = await kasitteleRyppaanKilpailut(
+    env,
+    kilpailu,
+    await listRyppaanKilpailut(env.DB, kilpailu.rypas_id),
+    kalenteri
+  );
   const julkaisemattomat = ryppaanKilpailut.filter((k) => k.tila === 'luonnos' || k.tila === 'vrl_virhe');
   const rypasHtml =
     ryppaanKilpailut.length > 1
